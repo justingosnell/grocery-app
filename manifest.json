@@ -1,0 +1,15 @@
+{
+  "name": "Modern Grocery List",
+  "short_name": "GroceryList",
+  "description": "A modern, dark-themed grocery list app with offline support",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#3b82f6",
+  "orientation": "portrait-primary",
+  "scope": "./",
+  "lang": "en",
+  "categories": ["productivity", "shopping", "lifestyle"],
+  "icons": [],
+  "shortcuts": []
+}
