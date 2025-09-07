@@ -1,0 +1,16 @@
+{
+  "name": "grocery-list-creator",
+  "version": "1.0.0",
+  "description": "A modern grocery list creator with emoji support",
+  "main": "index.html",
+  "scripts": {
+    "build-css": "tailwindcss -i ./src/input.css -o ./dist/output.css --watch",
+    "build-css-prod": "tailwindcss -i ./src/input.css -o ./dist/output.css --minify"
+  },
+  "keywords": ["grocery", "list", "pwa", "tailwind"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "tailwindcss": "^3.4.0"
+  }
+}
