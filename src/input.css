@@ -1,0 +1,10 @@
+/* Tailwind entry */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* You can add custom layers below if needed */
+@layer components {
+  /* example: */
+  /* .card { @apply rounded-xl shadow-lg bg-white; } */
+}
