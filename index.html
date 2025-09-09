@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modern Grocery List</title>
+    
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
+    <meta name="theme-color" content="#1e1e1e">
+    
+    <!-- Fallback Tailwind CDN for any missing utilities -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Local Tailwind build (enable when ready) -->
+    <!-- <link rel="stylesheet" href="/dist/output.css"> -->
+    <link rel="stylesheet" href="secondary.css">
+</head>
+<body class="p-4">
+
+    <!-- Off-canvas Saved Lists toggle button (left-edge tab) -->
+    <button id="toggleSavedPanel" aria-label="Toggle saved lists" aria-expanded="false"
+            class="fixed top-1/2 -translate-y-1/2 left-0 z-40 bg-blue-500 hover:bg-blue-600 text-white font-semibold w-10 h-12 rounded-r-lg shadow flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+    </button>
+
+    <!-- Off-canvas Saved Lists drawer (overlay + panel) -->
+    <div id="savedPanel" class="fixed inset-0 z-50 hidden">
+        <!-- Overlay -->
+        <div id="savedPanelOverlay" class="absolute inset-0 bg-black/50"></div>
+        <!-- Side panel -->
+        <aside class="absolute left-0 top-0 h-full w-80 max-w-full bg-white dark:bg-gray-900 shadow-xl p-4 overflow-y-auto">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-2xl font-semibold text-gray-700">Saved Lists</h2>
+                <button aria-label="Close saved lists" class="text-gray-500 hover:text-gray-700"
+                        onclick="document.getElementById('toggleSavedPanel') && document.getElementById('toggleSavedPanel').click()">
+                    ✕
+                </button>
+            </div>
+            <div class="mb-4">
+                <label for="savedSearchInput" class="sr-only">Search saved lists</label>
+                <div class="relative">
+                  <input type="text" id="savedSearchInput" class="w-full p-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-surface pr-10" placeholder="Search saved lists...">
+                  <button type="button" id="clearSavedSearchInput" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 hidden" tabindex="-1" aria-label="Clear input">
+                    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="11" cy="11" r="10" fill="currentColor" fill-opacity="0.15"/>
+                      <path d="M8 8l6 6M14 8l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                  </button>
+                </div>
+            </div>
+            <div id="savedListsContainer" class="space-y-3">
+                <div id="savedListsEmptyState" class="empty-state text-center text-gray-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                    <h3 class="text-xl font-medium">No lists saved yet.</h3>
+                    <p class="text-center text-sm mt-2">Save a list to access it here later.</p>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <main class="container mx-auto p-4 md:p-8">
+        <header class="flex items-center justify-center mb-8">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-blue-500 mr-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.182 1.706.707 1.706H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            <h1 class="text-4xl md:text-5xl font-bold text-gray-700"> Grocery List Creator</h1>
+        </header>
+
+        <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div class="lg:col-span-2 card p-6" role="region" aria-labelledby="current-list-heading">
+                <div class="flex flex-col sm:flex-row gap-4 mb-4">
+                    <div class="relative flex-grow">
+                        <label for="listNameInput" class="sr-only">Supermarket Name</label>
+                        <input type="text" id="listNameInput" class="w-full p-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500 bg-surface pr-10" placeholder="e.g. Publix, Ingles - Enter list name" autocomplete="off" aria-autocomplete="list" aria-controls="autocompleteContainer" aria-label="Enter a name for your saved list">
+                        <button type="button" id="clearListNameInput" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 hidden" tabindex="-1" aria-label="Clear input">
+                          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="11" cy="11" r="10" fill="currentColor" fill-opacity="0.15"/>
+                            <path d="M8 8l6 6M14 8l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                          </svg>
+                        </button>
+                        <div id="autocompleteContainer" class="absolute w-full mt-1 autocomplete-list shadow-lg hidden" role="listbox"></div>
+                        <p id="nameWarning" class="text-sm text-red-500 mt-2 hidden" aria-live="polite">Please type at least three letters to see suggestions.</p>
+                    </div>
+                </div>
+
+                <div class="sticky top-0 z-20 bg-surface pb-6 -mx-6 px-6">
+                    <div class="text-center text-gray-600 py-4">
+                        <p>Use the + button to add items to your list</p>
+                    </div>
+                </div>
+
+                <ul id="currentList" class="space-y-3" role="list">
+                </ul>
+
+
+                
+                <div id="messageAlert" role="alert" class="mt-4 p-4 rounded-lg text-white font-semibold hidden"></div>
+
+                <div id="clearListBtnContainer" class="flex justify-center mt-6 hidden">
+                    <button id="clearListBtn" class="btn bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg" aria-label="Save the current list">Save List</button>
+                </div>
+
+                <div class="text-center mt-6">
+                    <a href="#" id="clearListLink" class="text-red-500 hover:text-red-400 transition-colors duration-200">
+                        Clear List
+                    </a>
+                </div>
+            </div>
+
+
+        </section>
+    </main>
+
+
+
+    <!-- Add Item Modal -->
+    <div id="addItemModal" class="fixed inset-0 flex items-center justify-center hidden z-50 modal-overlay" role="dialog" aria-modal="true" aria-labelledby="addItemModalHeading" aria-hidden="true">
+        <div class="card p-6 w-full max-w-md modal-content" role="document">
+            <h3 id="addItemModalHeading" class="text-xl font-bold mb-4">Add New Item</h3>
+            <form id="addItemForm">
+                <div class="space-y-4">
+                    <div class="relative">
+                        <label for="itemInput" class="block text-sm font-medium form-label mb-2">Item Name</label>
+                        <input type="text" id="itemInput" class="w-full p-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-surface pr-10" placeholder="e.g., milk, apples, bread" aria-label="Enter item name" autocomplete="off">
+                        <button type="button" id="clearItemInput" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 hidden" tabindex="-1" aria-label="Clear input">
+                          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="11" cy="11" r="10" fill="currentColor" fill-opacity="0.15"/>
+                            <path d="M8 8l6 6M14 8l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                          </svg>
+                        </button>
+                        <div id="itemAutocomplete" class="absolute w-full mt-1 autocomplete-list shadow-lg hidden" role="listbox"></div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label for="quantityInput" class="block text-sm font-medium form-label mb-2">Quantity</label>
+                            <input type="number" id="quantityInput" class="w-full p-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-surface" value="1" min="1" aria-label="Item quantity">
+                        </div>
+                        <div>
+                            <label for="emojiInput" class="block text-sm font-medium form-label mb-2">Emoji (optional)</label>
+                            <div class="relative">
+                              <input type="text" id="emojiInput" class="w-full p-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-surface pr-10" placeholder="🥛 or use emoji picker" aria-label="Add emoji" maxlength="8">
+                              <button type="button" id="clearEmojiInput" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 hidden" tabindex="-1" aria-label="Clear input">
+                                <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                  <circle cx="11" cy="11" r="10" fill="currentColor" fill-opacity="0.15"/>
+                                  <path d="M8 8l6 6M14 8l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                </svg>
+                              </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="emoji-suggestions">
+                        <p class="text-sm font-medium form-label mb-2">Quick Emojis: <span class="text-xs opacity-75">(or use your device's emoji keyboard)</span></p>
+                        <div class="flex flex-wrap gap-2">
+                            <!-- Dairy & Beverages -->
+                            <button type="button" class="emoji-btn" data-emoji="🥛" title="Milk">🥛</button>
+                            <button type="button" class="emoji-btn" data-emoji="🧀" title="Cheese">🧀</button>
+                            <button type="button" class="emoji-btn" data-emoji="🥚" title="Eggs">🥚</button>
+                            <button type="button" class="emoji-btn" data-emoji="🧈" title="Butter">🧈</button>
+                            
+                            <!-- Fruits -->
+                            <button type="button" class="emoji-btn" data-emoji="🍎">🍎</button>
+                            <button type="button" class="emoji-btn" data-emoji="🍌">🍌</button>
+                            <button type="button" class="emoji-btn" data-emoji="🍊">🍊</button>
+                            <button type="button" class="emoji-btn" data-emoji="🍇">🍇</button>
+                            
+                            <!-- Vegetables -->
+                            <button type="button" class="emoji-btn" data-emoji="🥕" title="Carrots">🥕</button>
+                            <button type="button" class="emoji-btn" data-emoji="🍅" title="Tomatoes">🍅</button>
+                            <button type="button" class="emoji-btn" data-emoji="🥔" title="Potatoes">🥔</button>
+                            <button type="button" class="emoji-btn" data-emoji="🥬" title="Leafy Greens">🥬</button>
+                            <button type="button" class="emoji-btn" data-emoji="🥦" title="Broccoli">🥦</button>
+                            <button type="button" class="emoji-btn" data-emoji="🌽" title="Corn">🌽</button>
+                            
+                            <!-- Meat & Protein -->
+                            <button type="button" class="emoji-btn" data-emoji="🍗" title="Chicken">🍗</button>
+                            <button type="button" class="emoji-btn" data-emoji="🥩" title="Beef">🥩</button>
+                            <button type="button" class="emoji-btn" data-emoji="🥓" title="Pork/Bacon">🥓</button>
+                            <button type="button" class="emoji-btn" data-emoji="🐟" title="Fish">🐟</button>
+                            <button type="button" class="emoji-btn" data-emoji="🐄" title="Beef/Milk">🐄</button>
+                            <button type="button" class="emoji-btn" data-emoji="🐷" title="Pork">🐷</button>
+                            
+                            <!-- Grains & Bakery -->
+                            <button type="button" class="emoji-btn" data-emoji="🍞">🍞</button>
+                            <button type="button" class="emoji-btn" data-emoji="🥖">🥖</button>
+                            <button type="button" class="emoji-btn" data-emoji="🍝">🍝</button>
+                            <button type="button" class="emoji-btn" data-emoji="🍚">🍚</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="flex justify-end space-x-4 mt-6">
+                    <button type="button" id="cancelAddBtn" class="btn bg-gray-300 hover:bg-gray-400 text-gray-700 font-semibold py-2 px-4 rounded-lg">Cancel</button>
+                    <button type="submit" id="addItemBtn" class="btn bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg">Add Item</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="deleteModal" class="fixed inset-0 flex items-center justify-center hidden z-50 modal-overlay" role="dialog" aria-modal="true" aria-labelledby="deleteModalHeading" aria-hidden="true">
+        <div class="card p-6 w-full max-w-sm modal-content" role="document">
+            <h3 id="deleteModalHeading" class="text-xl font-bold mb-4">Confirm Deletion</h3>
+            <p class="text-gray-700 mb-6">Are you sure you want to delete this grocery list? This action cannot be undone.</p>
+            <div class="flex justify-end space-x-4">
+                <button id="cancelDeleteBtn" class="btn bg-gray-300 hover:bg-gray-400 text-gray-700 font-semibold py-2 px-4 rounded-lg" aria-label="Cancel deletion">Cancel</button>
+                <button id="confirmDeleteBtn" class="btn bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-lg" data-list-name="" aria-label="Confirm list deletion">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="clearListModal" class="fixed inset-0 flex items-center justify-center hidden z-50 modal-overlay" role="dialog" aria-modal="true" aria-labelledby="clearListModalHeading" aria-hidden="true">
+        <div class="card p-6 w-full max-w-sm modal-content" role="document">
+            <h3 id="clearListModalHeading" class="text-xl font-bold mb-4">Confirm Clear List</h3>
+            <p class="text-gray-700 mb-6">Are you sure you want to clear this  list? </p>
+            <div class="flex justify-end space-x-4">
+                <button id="cancelClearBtn" class="btn bg-gray-300 hover:bg-gray-400 text-gray-700 font-semibold py-2 px-4 rounded-lg" aria-label="Cancel clearing the list">Cancel</button>
+                <button id="confirmClearBtn" class="btn bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-lg" aria-label="Confirm clearing the list">Clear</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="copyOptionsModal" class="fixed inset-0 flex items-center justify-center hidden z-50 modal-overlay" role="dialog" aria-modal="true" aria-labelledby="copyOptionsModalHeading" aria-hidden="true">
+        <div class="card p-6 w-full max-w-sm modal-content" role="document">
+            <h3 id="copyOptionsModalHeading" class="text-xl font-bold mb-4">Copy List As...</h3>
+            <div class="flex flex-col space-y-4">
+                <button class="btn bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg" data-format="simple">Simple List</button>
+                <button class="btn bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg" data-format="checkbox">With Checkboxes</button>
+                <a id="notesAppLink" class="btn bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg" href="#" role="button">Save to Notes App</a>
+            </div>
+            <div class="flex justify-end mt-6">
+                <button id="cancelCopyBtn" class="btn bg-gray-300 hover:bg-gray-400 text-gray-700 font-semibold py-2 px-4 rounded-lg">Cancel</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Alert message for user feedback -->
+    <div id="messageAlert" class="fixed top-4 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-lg text-white font-medium z-50 hidden transition-all duration-300"></div>
+    
+    <!-- ARIA live region for screen readers -->
+    <div id="ariaLive" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+    
+    <footer class="mt-8 py-4 text-center text-gray-600 text-sm">
+        <p>&copy; 2025 Modern Grocery List. All rights reserved.</p>
+    </footer>
+
+    <!-- Floating Add Button - moved outside main to avoid positioning issues -->
+    <button id="scrollToTopBtn" aria-label="Add new item" title="Add new item" class="right-4">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+        </svg>
+    </button>
+
+    <script>
+        // Check for Service Worker support and register it (disabled for local file testing)
+        if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js')
+                .then(registration => {
+                    console.log('Service Worker registered! Scope:', registration.scope);
+                })
+                .catch(err => {
+                    console.log('Service Worker registration failed:', err);
+                });
+            });
+        }
+        
+        // Add Item Button - Always Visible (No Scroll Behavior)
+        document.addEventListener('DOMContentLoaded', function() {
+            const addButton = document.getElementById('scrollToTopBtn');
+            const modal = document.getElementById('addItemModal');
+            const itemInput = document.getElementById('itemInput');
+            
+            if (addButton && modal) {
+                // Initialize button - CSS handles the styling
+                console.log('Add button initialized');
+                
+                // Button click opens modal
+                addButton.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('Add button clicked - opening modal');
+                    // Hide button immediately when clicked
+                    addButton.classList.add('modal-open');
+                    // Open modal
+                    modal.classList.remove('hidden');
+                    modal.setAttribute('aria-hidden', 'false');
+                    if (itemInput) itemInput.focus();
+                });
+                
+                // Only hide button when modal is open
+                const observer = new MutationObserver(function() {
+                    if (modal.classList.contains('hidden')) {
+                        // Modal closed - show button
+                        addButton.classList.remove('modal-open');
+                        console.log('Modal closed - showing button');
+                    } else {
+                        // Modal open - hide button
+                        addButton.classList.add('modal-open');
+                        console.log('Modal open - hiding button');
+                    }
+                });
+                observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+            }
+            
+            // Remove any scroll event listeners that might affect the button
+            window.removeEventListener('scroll', arguments.callee);
+        });
+    </script>
+    <script src="./script.js"></script>
+</body>
+</html>
