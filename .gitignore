@@ -1,0 +1,28 @@
+# Node
+node_modules/
+.npm-cache/
+
+# Env
+.env
+.env.*
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-error.log
+
+# Build outputs
+build/
+dist/
+coverage/
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
+
+# Misc caches
+.turbo/
+.parcel-cache/
+.vercel/
