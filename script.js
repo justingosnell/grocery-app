@@ -84,7 +84,7 @@ let currentList = [];
 let savedLists = {};
 let editingIndex = -1;
 let isOnline = navigator.onLine;
-const groceryStores = ["Walmart", "Kroger", "Albertsons", "Publix", "Whole Foods Market", "Trader Joe's", "Aldi", "Costco", "Sam's Club", "Target", "H-E-B", "Wegmans", "Safeway", "Meijer", "Sprouts Farmers Market", "Fresh Market", "Hy-Vee", "Food Lion", "Stop & Shop", "Giant Food", "Harris Teeter", "WinCo Foods", "Lidl", "Save A Lot", "Raley's"];
+const groceryStores = ["Walmart", "Kroger", "Albertsons", "Publix", "Whole Foods Market", "Trader Joe's", "Aldi", "Costco", "Sam's Club", "Target", "H-E-B", "Wegmans", "Safeway", "Meijer", "Sprouts Farmers Market", "Fresh Market", "Hy-Vee", "Food Lion", "Stop & Shop", "Giant Food", "Harris Teeter", "WinCo Foods", "Lidl", "Save A Lot", "Raley's","Food Depot","Ingles","Sam's Club"];
 
 // Common grocery items for autocomplete suggestions
 const groceryItems = [
