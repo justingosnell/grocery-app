@@ -14,18 +14,10 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&display=swap" rel="stylesheet">
 
-    <!-- PWA: Manifest + Service Worker registration -->
-    <meta name="theme-color" content="#0ea5e9">
-    <link rel="manifest" href="/manifest.json">
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/service-worker.js')
-            .then(reg => console.log('[PWA] SW registered', reg.scope))
-            .catch(err => console.warn('[PWA] SW registration failed', err));
-        });
-      }
-    </script>
+    <!-- PWA disabled: removed manifest and service worker registration -->
+    <!-- <meta name="theme-color" content="#0ea5e9"> -->
+    <!-- <link rel="manifest" href="/manifest.json"> -->
+    <!-- Service worker registration removed -->
 
     <style>
         .bottom-nav {
@@ -374,6 +366,8 @@
             location.hostname === '127.0.0.1' ||
             location.protocol === 'file:'
         ) ? 'http://localhost:4000' : location.origin;
+        // Always send cookies on cross-origin requests if API_BASE differs
+        // (fetch calls in script.js already pass credentials: 'include')
     </script>
     <script src="./script.js"></script>
 

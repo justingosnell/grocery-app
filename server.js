@@ -1,80 +1,59 @@
 /*
-  Express + Socket.IO server with MongoDB (Mongoose) and a dev-friendly in-memory fallback
+  Express + Socket.IO server using SQLite (better-sqlite3)
   - Loads env from .env
-  - If MongoDB is available, uses it; otherwise can run entirely in-memory
   - Auth: JWT + bcryptjs
   - Lists CRUD protected by JWT
+  - Serves static frontend from project root
 */
 
 import express from 'express';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
-import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { randomUUID } from 'crypto';
+import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import db from './db.js';
 
 dotenv.config();
 
 const PORT = process.env.PORT || 4000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/grocery_app';
-let USE_MEMORY = (process.env.USE_IN_MEMORY || '').toLowerCase() === 'true';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
-
-// In-memory stores (used when USE_MEMORY === true)
-const memory = {
-  users: [], // { id, username, passwordHash }
-  lists: []  // { userId, name, items: [{ name, quantity, emoji, completed }] }
-};
-
-// Mongo models (only used when USE_MEMORY === false)
-const itemSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  quantity: { type: Number, default: 1 },
-  emoji: { type: String, default: '' },
-  completed: { type: Boolean, default: false }
-}, { _id: false });
-
-const listSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
-  name: { type: String, required: true },
-  items: { type: [itemSchema], default: [] },
-}, { timestamps: true });
-listSchema.index({ userId: 1, name: 1 }, { unique: true });
-
-const userSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
-  passwordHash: { type: String, required: true }
-}, { timestamps: true });
-
-const User = mongoose.model('User', userSchema);
-const List = mongoose.model('List', listSchema);
 
 // Express + HTTP + Socket.IO
 const app = express();
 const server = http.createServer(app);
-const io = new SocketIOServer(server, { cors: { origin: '*' } });
+const io = new SocketIOServer(server, {
+  cors: {
+    origin: (origin, cb) => cb(null, true),
+    credentials: true
+  }
+});
 
-app.use(cors());
+// CORS for API
+app.use(cors({
+  origin: (origin, cb) => cb(null, true), // reflect any origin in dev; lock this down in prod
+  credentials: true
+}));
+app.use(cookieParser());
 app.use(express.json());
 
 // Serve frontend static files from project root
 const __filename = fileURLToPath(import.meta.url);
+typeof __filename; // silence unused var in some tools
 const __dirname = path.dirname(__filename);
 const PUBLIC_DIR = __dirname; // project root contains index.html
 app.use(express.static(PUBLIC_DIR));
 
 // Health
-app.get('/health', (_req, res) => res.json({ status: 'ok', mode: USE_MEMORY ? 'memory' : 'mongo' }));
+app.get('/health', (_req, res) => res.json({ status: 'ok', mode: 'sqlite' }));
 
-// --- Auth Middleware ---
+// --- Auth Middleware (cookie-based) ---
 function auth(req, res, next) {
-  const authHeader = req.headers.authorization || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const token = req.cookies?.auth || null;
   if (!token) return res.status(401).json({ message: 'Unauthorized' });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
@@ -85,69 +64,38 @@ function auth(req, res, next) {
   }
 }
 
-// --- In-memory helpers ---
-async function memFindUserByUsername(username) {
-  return memory.users.find(u => u.username === username) || null;
-}
-async function memCreateUser(username, password) {
-  const existing = await memFindUserByUsername(username);
-  if (existing) return { error: 'Username already exists', status: 409 };
-  const passwordHash = await bcrypt.hash(password, 10);
-  const user = { id: randomUUID(), username, passwordHash };
-  memory.users.push(user);
-  return { user };
-}
-async function memVerifyUser(username, password) {
-  const user = await memFindUserByUsername(username);
-  if (!user) return { error: 'Invalid credentials', status: 401 };
-  const ok = await bcrypt.compare(password, user.passwordHash);
-  if (!ok) return { error: 'Invalid credentials', status: 401 };
-  return { user };
-}
-function memGetLists(userId) {
-  return memory.lists.filter(l => l.userId === userId).sort((a, b) => 0); // no timestamps in memory
-}
-function memGetList(userId, name) {
-  return memory.lists.find(l => l.userId === userId && l.name === name) || null;
-}
-function memCreateList(userId, name, items = []) {
-  if (memGetList(userId, name)) return { error: 'List already exists', status: 409 };
-  const list = { userId, name, items };
-  memory.lists.push(list);
-  return { list };
-}
-function memUpdateList(userId, name, items = []) {
-  const list = memGetList(userId, name);
-  if (!list) return { error: 'List not found', status: 404 };
-  list.items = items;
-  return { list };
-}
-function memDeleteList(userId, name) {
-  const idx = memory.lists.findIndex(l => l.userId === userId && l.name === name);
-  if (idx === -1) return { error: 'List not found', status: 404 };
-  const [deleted] = memory.lists.splice(idx, 1);
-  return { deleted };
-}
+// --- SQLite helpers ---
+const stmtFindUserByUsername = db.prepare('SELECT * FROM users WHERE username = ?');
+const stmtInsertUser = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)');
+
+const stmtListAll = db.prepare('SELECT id, name, items_json, updated_at FROM lists WHERE user_id = ? ORDER BY datetime(updated_at) DESC, id DESC');
+const stmtListOne = db.prepare('SELECT id, name, items_json, updated_at FROM lists WHERE user_id = ? AND name = ?');
+const stmtInsertList = db.prepare('INSERT INTO lists (user_id, name, items_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)');
+const stmtUpdateList = db.prepare('UPDATE lists SET items_json = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND name = ?');
+const stmtDeleteList = db.prepare('DELETE FROM lists WHERE user_id = ? AND name = ?');
 
 // --- Auth Routes ---
+const cookieOptions = {
+  httpOnly: true,
+  secure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production',
+  sameSite: 'lax',
+  maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+};
+
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { username, password } = req.body || {};
     if (!username || !password) return res.status(400).json({ message: 'username and password required' });
 
-    if (USE_MEMORY) {
-      const { user, error, status } = await memCreateUser(username, password);
-      if (error) return res.status(status).json({ message: error });
-      const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
-      return res.status(201).json({ token, username: user.username });
-    }
-
-    const existing = await User.findOne({ username });
+    const existing = stmtFindUserByUsername.get(username);
     if (existing) return res.status(409).json({ message: 'Username already exists' });
+
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = await User.create({ username, passwordHash });
-    const token = jwt.sign({ id: user._id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
-    res.status(201).json({ token, username: user.username });
+    const info = stmtInsertUser.run(username, passwordHash);
+
+    const token = jwt.sign({ id: info.lastInsertRowid, username }, JWT_SECRET, { expiresIn: '7d' });
+    res.cookie('auth', token, cookieOptions);
+    res.status(201).json({ username });
   } catch (e) {
     res.status(400).json({ message: e.message || 'Register failed' });
   }
@@ -157,94 +105,79 @@ app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ message: 'username and password required' });
 
-  if (USE_MEMORY) {
-    const { user, error, status } = await memVerifyUser(username, password);
-    if (error) return res.status(status).json({ message: error });
-    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
-    return res.json({ token, username: user.username });
-  }
-
-  const user = await User.findOne({ username });
+  const user = stmtFindUserByUsername.get(username);
   if (!user) return res.status(401).json({ message: 'Invalid credentials' });
-  const ok = await bcrypt.compare(password, user.passwordHash);
+  const ok = await bcrypt.compare(password, user.password_hash);
   if (!ok) return res.status(401).json({ message: 'Invalid credentials' });
-  const token = jwt.sign({ id: user._id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
-  res.json({ token, username: user.username });
+  const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+  res.cookie('auth', token, cookieOptions);
+  res.json({ username: user.username });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie('auth', { httpOnly: true, sameSite: 'lax', secure: cookieOptions.secure });
+  res.json({ ok: true });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  try {
+    const token = req.cookies?.auth;
+    if (!token) return res.status(200).json({ user: null });
+    const payload = jwt.verify(token, JWT_SECRET);
+    return res.json({ user: { id: payload.id, username: payload.username } });
+  } catch {
+    return res.status(200).json({ user: null });
+  }
 });
 
 // --- Lists API (Authenticated) ---
-app.get('/api/lists', auth, async (req, res) => {
-  if (USE_MEMORY) {
-    return res.json(memGetLists(req.user.id));
-  }
-  const lists = await List.find({ userId: req.user.id }).sort({ updatedAt: -1 });
+app.get('/api/lists', auth, (req, res) => {
+  const rows = stmtListAll.all(req.user.id);
+  const lists = rows.map(r => ({ name: r.name, items: JSON.parse(r.items_json), updatedAt: r.updated_at }));
   res.json(lists);
 });
 
-app.get('/api/lists/:name', auth, async (req, res) => {
+app.get('/api/lists/:name', auth, (req, res) => {
   const { name } = req.params;
-  if (USE_MEMORY) {
-    const list = memGetList(req.user.id, name);
-    if (!list) return res.status(404).json({ message: 'List not found' });
-    return res.json(list);
-  }
-  const list = await List.findOne({ userId: req.user.id, name });
-  if (!list) return res.status(404).json({ message: 'List not found' });
-  res.json(list);
+  const row = stmtListOne.get(req.user.id, name);
+  if (!row) return res.status(404).json({ message: 'List not found' });
+  res.json({ name: row.name, items: JSON.parse(row.items_json), updatedAt: row.updated_at });
 });
 
-app.post('/api/lists', auth, async (req, res) => {
+app.post('/api/lists', auth, (req, res) => {
   try {
     const { name, items = [] } = req.body || {};
     if (!name) return res.status(400).json({ message: 'name required' });
-    if (USE_MEMORY) {
-      const { list, error, status } = memCreateList(req.user.id, name, items);
-      if (error) return res.status(status).json({ message: error });
-      io.emit('list:created', { userId: req.user.id, name: list.name });
-      return res.status(201).json(list);
-    }
-    const created = await List.create({ userId: req.user.id, name, items });
-    io.emit('list:created', { userId: req.user.id, name: created.name });
-    res.status(201).json(created);
+    // Ensure not duplicate
+    const exists = stmtListOne.get(req.user.id, name);
+    if (exists) return res.status(409).json({ message: 'List already exists' });
+
+    stmtInsertList.run(req.user.id, name, JSON.stringify(items));
+    io.emit('list:created', { userId: req.user.id, name });
+    res.status(201).json({ name, items });
   } catch (err) {
     res.status(400).json({ message: err.message || 'Create failed' });
   }
 });
 
-app.put('/api/lists/:name', auth, async (req, res) => {
+app.put('/api/lists/:name', auth, (req, res) => {
   try {
     const { items = [] } = req.body || {};
     const { name } = req.params;
-    if (USE_MEMORY) {
-      const { list, error, status } = memUpdateList(req.user.id, name, items);
-      if (error) return res.status(status).json({ message: error });
-      io.emit('list:updated', { userId: req.user.id, name: list.name });
-      return res.json(list);
-    }
-    const updated = await List.findOneAndUpdate(
-      { userId: req.user.id, name },
-      { $set: { items } },
-      { new: true, upsert: false }
-    );
-    if (!updated) return res.status(404).json({ message: 'List not found' });
-    io.emit('list:updated', { userId: req.user.id, name: updated.name });
-    res.json(updated);
+    const result = stmtUpdateList.run(JSON.stringify(items), req.user.id, name);
+    if (result.changes === 0) return res.status(404).json({ message: 'List not found' });
+    io.emit('list:updated', { userId: req.user.id, name });
+    res.json({ name, items });
   } catch (err) {
     res.status(400).json({ message: err.message || 'Update failed' });
   }
 });
 
-app.delete('/api/lists/:name', auth, async (req, res) => {
+app.delete('/api/lists/:name', auth, (req, res) => {
   const { name } = req.params;
-  if (USE_MEMORY) {
-    const { deleted, error, status } = memDeleteList(req.user.id, name);
-    if (error) return res.status(status).json({ message: error });
-    io.emit('list:deleted', { userId: req.user.id, name: name });
-    return res.json({ ok: true });
-  }
-  const deleted = await List.findOneAndDelete({ userId: req.user.id, name });
-  if (!deleted) return res.status(404).json({ message: 'List not found' });
-  io.emit('list:deleted', { userId: req.user.id, name: deleted.name });
+  const result = stmtDeleteList.run(req.user.id, name);
+  if (result.changes === 0) return res.status(404).json({ message: 'List not found' });
+  io.emit('list:deleted', { userId: req.user.id, name });
   res.json({ ok: true });
 });
 
@@ -264,17 +197,4 @@ app.get('*', (req, res, next) => {
 });
 
 // Start server
-async function start() {
-  if (!USE_MEMORY) {
-    try {
-      await mongoose.connect(MONGODB_URI);
-      console.log('Connected to MongoDB');
-    } catch (err) {
-      console.warn('MongoDB connection failed. Falling back to in-memory mode. Reason:', err.message);
-      USE_MEMORY = true;
-    }
-  }
-  server.listen(PORT, () => console.log(`Server listening on http://localhost:${PORT} (mode: ${USE_MEMORY ? 'memory' : 'mongo'})`));
-}
-
-start();
+server.listen(PORT, () => console.log(`Server listening on http://localhost:${PORT} (mode: sqlite)`));

@@ -113,21 +113,21 @@ let savedFilter = '';
 // === UTILITY FUNCTIONS ===================
 // =====================================
 
-// Generic functions for local storage (kept for current list only)
+// Local persistence using localStorage (works for static hosting like GitHub Pages)
 function saveData(key, data) {
     try {
         localStorage.setItem(key, JSON.stringify(data));
     } catch (e) {
-        console.error("Error saving to localStorage", e);
+        console.warn('saveData failed', e);
     }
 }
 
 function loadData(key) {
     try {
-        const data = localStorage.getItem(key);
-        return data ? JSON.parse(data) : null;
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : null;
     } catch (e) {
-        console.error("Error loading from localStorage", e);
+        console.warn('loadData failed', e);
         return null;
     }
 }
@@ -201,7 +201,7 @@ function showAuthView(view) {
 
 function setAuthUI(auth) {
     if (!loginLink || !logoutLink || !authUserLabel) return;
-    const loggedIn = !!auth?.token;
+    const loggedIn = !!auth?.username; // cookie-auth: presence of user
     if (loggedIn) {
         loginLink?.classList.add('hidden');
         logoutLink?.classList.remove('hidden');
@@ -220,22 +220,30 @@ function setAuthUI(auth) {
     if (accountNavLabel) accountNavLabel.textContent = loggedIn ? 'Logout' : 'Login';
 }
 
-function getAuth() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    const username = localStorage.getItem('authUsername');
-    return token ? { token, username } : null;
+async function fetchMe() {
+    try {
+        const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.user;
+    } catch { return null; }
 }
 
-function setAuth(token, username) {
-    localStorage.setItem(TOKEN_KEY, token);
-    localStorage.setItem('authUsername', username);
-    setAuthUI({ token, username });
+async function getAuth() {
+    const user = await fetchMe();
+    return user ? { username: user.username } : null;
 }
 
-function clearAuth() {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem('authUsername');
-    setAuthUI(null);
+function setAuthUIFromUser(user) {
+    if (user) {
+        setAuthUI({ username: user.username });
+    } else {
+        setAuthUI(null);
+    }
+}
+
+async function apiLogout() {
+    await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
 }
 
 // Close saved lists with Escape key
@@ -283,13 +291,10 @@ const showAlert = showToast;
 
 // --- API + Realtime Integration ---
 const API_BASE = (window.API_BASE || 'http://localhost:4000');
-const TOKEN_KEY = 'authToken';
 let serverAvailable = false;
 
-function getAuthHeaders() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+// Cookie-based auth: no headers needed; include credentials on fetch
+function getAuthHeaders() { return {}; }
 
 async function checkServerAvailable(timeoutMs = 3000) {
     const controller = new AbortController();
@@ -310,25 +315,27 @@ async function checkServerAvailable(timeoutMs = 3000) {
     return serverAvailable;
 }
 
-function setServerUIByAvailability() {
-    // Keep auth UI visible even if server is not available, so modal is never empty
+async function setServerUIByAvailability() {
     if (!loginLink || !logoutLink) return;
     if (!serverAvailable) {
-        // Show login link, hide logout link
-        loginLink.classList.remove('hidden');
+        // Static/offline mode: hide account actions
+        loginLink.classList.add('hidden');
         logoutLink.classList.add('hidden');
-        // Ensure the auth forms are visible and account panel hidden
-        authPanel?.classList.remove('hidden');
+        authPanel?.classList.add('hidden');
         accountPanel?.classList.add('hidden');
+        if (accountNavLabel) accountNavLabel.textContent = 'Account';
     } else {
-        // Restore based on auth state
-        setAuthUI(getAuth());
+        const user = await fetchMe();
+        setAuthUIFromUser(user);
     }
 }
 
 async function apiRegister(username, password) {
     const res = await fetch(`${API_BASE}/api/auth/register`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password })
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ username, password })
     });
     if (!res.ok) throw new Error((await res.json()).message || 'Register failed');
     return res.json();
@@ -336,20 +343,23 @@ async function apiRegister(username, password) {
 
 async function apiLogin(username, password) {
     const res = await fetch(`${API_BASE}/api/auth/login`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password })
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ username, password })
     });
     if (!res.ok) throw new Error((await res.json()).message || 'Login failed');
     return res.json();
 }
 
 async function apiGetLists() {
-    const res = await fetch(`${API_BASE}/api/lists`, { headers: { ...getAuthHeaders() } });
+    const res = await fetch(`${API_BASE}/api/lists`, { credentials: 'include' });
     if (!res.ok) throw new Error('Failed to fetch lists');
     return res.json();
 }
 
 async function apiGetList(name) {
-    const res = await fetch(`${API_BASE}/api/lists/${encodeURIComponent(name)}`, { headers: { ...getAuthHeaders() } });
+    const res = await fetch(`${API_BASE}/api/lists/${encodeURIComponent(name)}`, { credentials: 'include' });
     if (!res.ok) throw new Error('List not found');
     return res.json();
 }
@@ -358,14 +368,16 @@ async function apiUpsertList(name, items) {
     // Try updating first
     let res = await fetch(`${API_BASE}/api/lists/${encodeURIComponent(name)}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ items })
     });
     if (res.status === 404) {
         // Create if not exists
         res = await fetch(`${API_BASE}/api/lists`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify({ name, items })
         });
     }
@@ -387,16 +399,34 @@ function updateSavedListsBadge() {
 }
 
 async function apiDeleteList(name) {
-    const res = await fetch(`${API_BASE}/api/lists/${encodeURIComponent(name)}`, { method: 'DELETE', headers: { ...getAuthHeaders() } });
+    if (!serverAvailable) {
+        // Local delete only
+        const lists = loadData('savedLists') || {};
+        if (lists[name]) {
+            delete lists[name];
+            saveData('savedLists', lists);
+            savedLists = lists;
+            return { ok: true };
+        }
+        throw new Error('List not found');
+    }
+    const res = await fetch(`${API_BASE}/api/lists/${encodeURIComponent(name)}`, { method: 'DELETE', credentials: 'include' });
     if (!res.ok) throw new Error('Failed to delete list');
     return res.json();
 }
 
 async function refreshSavedListsFromServer() {
+    if (!serverAvailable) {
+        // Static/offline mode: load from localStorage
+        savedLists = loadData('savedLists') || {};
+        renderSavedLists();
+        return;
+    }
     try {
-        const auth = getAuth();
+        const auth = await getAuth();
         if (!auth) {
             // Not logged in → keep local cache and show auth UI
+            savedLists = loadData('savedLists') || {};
             setAuthUI(null);
             renderSavedLists();
             return;
@@ -407,10 +437,10 @@ async function refreshSavedListsFromServer() {
             obj[l.name] = { items: l.items || [], timestamp: l.updatedAt || new Date().toISOString() };
         });
         savedLists = obj;
-        saveData('savedLists', savedLists);
         renderSavedLists();
     } catch (e) {
-        // server unreachable or unauthorized → hide server-specific UI
+        // server unreachable or unauthorized → fallback to local
+        savedLists = loadData('savedLists') || {};
         renderSavedLists();
     }
 }
@@ -421,10 +451,9 @@ function initSocket() {
     try {
         if (!window.io || !serverAvailable) return;
         if (socket && socket.connected) return;
-        const auth = getAuth();
+        // Cookie-based auth: no token in query/auth needed; server will read cookie
         socket = window.io(API_BASE, {
-            transports: ['websocket', 'polling'],
-            auth: auth?.token ? { token: auth.token } : undefined
+            transports: ['websocket', 'polling']
         });
         const onChange = () => refreshSavedListsFromServer();
         socket.on('connect', () => console.log('Socket connected'));
@@ -536,8 +565,8 @@ function renderCurrentList() {
 
 // renderSavedLists function with new buttons (localStorage version)
 function renderSavedLists() {
-    // Ensure we reflect persisted data (local cache already refreshed from server when possible)
-    savedLists = loadData('savedLists') || {};
+    // Reflect local or server state
+    savedLists = savedLists || {};
 
     // Update the Saved Lists badge count
     updateSavedListsBadge();
@@ -643,7 +672,6 @@ function handleAddItem(e) {
     emojiInput.value = '';
     handleModal(addItemModal, false);
 
-    saveData('currentList', currentList);
     renderCurrentList();
     updateSaveButtonState();
 }
@@ -788,6 +816,21 @@ async function handleSaveList() {
         return;
     }
 
+    if (!serverAvailable) {
+        // Static/offline mode: save locally
+        const lists = loadData('savedLists') || {};
+        lists[listName] = { items: currentList.slice(), timestamp: new Date().toISOString() };
+        saveData('savedLists', lists);
+        savedLists = lists;
+        activeListName = listName;
+        renderSavedLists();
+        updateSavedListsBadge();
+        showToast('Saved locally', 'success');
+        listNameInput.value = '';
+        updateSaveButtonState();
+        return;
+    }
+
     try {
         await apiUpsertList(listName, currentList);
         await refreshSavedListsFromServer();
@@ -797,13 +840,16 @@ async function handleSaveList() {
         showToast('Saved', 'success');
         listNameInput.value = '';
     } catch (e) {
-        const listData = { items: currentList, timestamp: new Date().toISOString() };
-        savedLists = loadData('savedLists') || {};
-        savedLists[listName] = listData;
-        saveData('savedLists', savedLists);
+        // Fallback to local save if server save fails
+        const lists = loadData('savedLists') || {};
+        lists[listName] = { items: currentList.slice(), timestamp: new Date().toISOString() };
+        saveData('savedLists', lists);
+        savedLists = lists;
         activeListName = listName;
         renderSavedLists();
-        showToast('Saved', 'success');
+        updateSavedListsBadge();
+        showToast('Saved locally (server unavailable)', 'info');
+        listNameInput.value = '';
     }
     updateSaveButtonState();
 }
@@ -886,6 +932,11 @@ async function init() {
     renderCurrentList();
     await refreshSavedListsFromServer();
     renderSavedLists();
+
+    // Initialize auth UI from cookie
+    const me = await fetchMe();
+    setAuthUIFromUser(me);
+
     setupEventListeners();
     // Do not show online toast on initial load
     updateSaveButtonState();
@@ -906,12 +957,13 @@ function setupEventListeners() {
     }
     if (accountNavBtn) {
         accountNavBtn.addEventListener('click', () => {
-            const auth = getAuth();
-            if (auth) {
-                clearAuth();
-                showToast('Logged out.', 'info');
-                refreshSavedListsFromServer();
-            } else {
+            fetchMe().then(async (user) => {
+                if (user) {
+                    await apiLogout();
+                    setAuthUIFromUser(null);
+                    showToast('Logged out.', 'info');
+                    refreshSavedListsFromServer();
+                } else {
                 const modal = document.getElementById('accountModal');
                 if (modal) {
                     showAuthView('login');
@@ -927,15 +979,17 @@ function setupEventListeners() {
         showLoginLink.addEventListener('click', () => showAuthView('login'));
     }
     if (logoutLink) {
-        logoutLink.addEventListener('click', () => {
-            clearAuth();
+        logoutLink.addEventListener('click', async () => {
+            await apiLogout();
+            setAuthUIFromUser(null);
             showToast('Logged out.', 'info');
             refreshSavedListsFromServer();
         });
     }
     if (accountLogoutBtn) {
-        accountLogoutBtn.addEventListener('click', () => {
-            clearAuth();
+        accountLogoutBtn.addEventListener('click', async () => {
+            await apiLogout();
+            setAuthUIFromUser(null);
             showToast('Logged out.', 'info');
             refreshSavedListsFromServer();
         });
@@ -946,8 +1000,9 @@ function setupEventListeners() {
             const username = document.getElementById('loginUsername').value.trim();
             const password = document.getElementById('loginPassword').value;
             try {
-                const { token, username: uname } = await apiLogin(username, password);
-                setAuth(token, uname);
+                await apiLogin(username, password);
+                const user = await fetchMe();
+                setAuthUIFromUser(user);
                 showToast('Login successful!', 'success');
                 hideModal('accountModal');
                 await refreshSavedListsFromServer();
@@ -967,8 +1022,9 @@ function setupEventListeners() {
                 return;
             }
             try {
-                const { token, username: uname } = await apiRegister(username, password);
-                setAuth(token, uname);
+                await apiRegister(username, password);
+                const user = await fetchMe();
+                setAuthUIFromUser(user);
                 showToast('Account created!', 'success');
                 hideModal('accountModal');
                 await refreshSavedListsFromServer();
