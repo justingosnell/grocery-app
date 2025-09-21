@@ -794,7 +794,7 @@ async function handleSaveList() {
         activeListName = listName;
         renderSavedLists();
         updateSavedListsBadge();
-        showToast(`List "${listName}" saved successfully!`, 'success');
+        showToast('Saved', 'success');
         listNameInput.value = '';
     } catch (e) {
         const listData = { items: currentList, timestamp: new Date().toISOString() };
@@ -803,7 +803,7 @@ async function handleSaveList() {
         saveData('savedLists', savedLists);
         activeListName = listName;
         renderSavedLists();
-        showToast('Saved locally (offline).', 'info');
+        showToast('Saved', 'success');
     }
     updateSaveButtonState();
 }

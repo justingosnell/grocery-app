@@ -14,28 +14,17 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&display=swap" rel="stylesheet">
 
-    <!-- TEMP: Service worker + cache cleanup. Remove after one refresh. -->
+    <!-- PWA: Manifest + Service Worker registration -->
+    <meta name="theme-color" content="#0ea5e9">
+    <link rel="manifest" href="/manifest.json">
     <script>
-    (async () => {
-      try {
-        if ('serviceWorker' in navigator) {
-          const regs = await navigator.serviceWorker.getRegistrations();
-          for (const r of regs) {
-            await r.unregister();
-          }
-          if (navigator.serviceWorker.controller) {
-            navigator.serviceWorker.controller.postMessage({ type: 'SKIP_WAITING' });
-          }
-        }
-        if (window.caches) {
-          const keys = await caches.keys();
-          for (const k of keys) await caches.delete(k);
-        }
-        console.log('[cleanup] SW and caches cleared for this origin');
-      } catch (e) {
-        console.warn('[cleanup] Cleanup script failed', e);
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/service-worker.js')
+            .then(reg => console.log('[PWA] SW registered', reg.scope))
+            .catch(err => console.warn('[PWA] SW registration failed', err));
+        });
       }
-    })();
     </script>
 
     <style>
