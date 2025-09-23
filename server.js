@@ -2,8 +2,9 @@
   Express + Socket.IO server using SQLite (better-sqlite3)
   - Loads env from .env
   - Auth: JWT + bcryptjs
-  - Lists CRUD protected by JWT
+  - Lists CRUD protected by cookie-based auth (JWT in HttpOnly cookie)
   - Serves static frontend from project root
+  - Cross-site auth enabled: SameSite=None; Secure cookies, CORS with credentials
 */
 
 import express from 'express';
@@ -23,21 +24,43 @@ dotenv.config();
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 
+// Allow configuring allowed origins via env (comma-separated).
+// Example: ALLOWED_ORIGINS="https://yourname.github.io,https://your-site.pages.dev"
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+// Whether to use Secure cookies (required for SameSite=None on modern browsers).
+// In production (e.g., Render over HTTPS), this should be true.
+const SECURE_COOKIES = process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production';
+
 // Express + HTTP + Socket.IO
 const app = express();
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
-    origin: (origin, cb) => cb(null, true),
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // allow same-origin or non-browser tools
+      if (ALLOWED_ORIGINS.length === 0) return cb(null, true); // dev: allow all
+      if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+      return cb(new Error('Not allowed by Socket.IO CORS'), false);
+    },
     credentials: true
   }
 });
 
 // CORS for API
 app.use(cors({
-  origin: (origin, cb) => cb(null, true), // reflect any origin in dev; lock this down in prod
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // same-origin or tools
+    if (ALLOWED_ORIGINS.length === 0) return cb(null, true); // dev-open
+    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'), false);
+  },
   credentials: true
 }));
+
 app.use(cookieParser());
 app.use(express.json());
 
@@ -75,11 +98,13 @@ const stmtUpdateList = db.prepare('UPDATE lists SET items_json = ?, updated_at =
 const stmtDeleteList = db.prepare('DELETE FROM lists WHERE user_id = ? AND name = ?');
 
 // --- Auth Routes ---
+// Cross-site compatible cookie settings
 const cookieOptions = {
   httpOnly: true,
-  secure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production',
-  sameSite: 'lax',
-  maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+  secure: SECURE_COOKIES,     // must be true on HTTPS (e.g., Render)
+  sameSite: 'none',           // required for cross-site cookies
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  path: '/'
 };
 
 app.post('/api/auth/register', async (req, res) => {
@@ -109,13 +134,20 @@ app.post('/api/auth/login', async (req, res) => {
   if (!user) return res.status(401).json({ message: 'Invalid credentials' });
   const ok = await bcrypt.compare(password, user.password_hash);
   if (!ok) return res.status(401).json({ message: 'Invalid credentials' });
+
   const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
   res.cookie('auth', token, cookieOptions);
   res.json({ username: user.username });
 });
 
-app.post('/api/auth/logout', (req, res) => {
-  res.clearCookie('auth', { httpOnly: true, sameSite: 'lax', secure: cookieOptions.secure });
+app.post('/api/auth/logout', (_req, res) => {
+  // Clear using the same attributes for reliability
+  res.clearCookie('auth', {
+    httpOnly: true,
+    secure: SECURE_COOKIES,
+    sameSite: 'none',
+    path: '/'
+  });
   res.json({ ok: true });
 });
 
@@ -167,34 +199,4 @@ app.put('/api/lists/:name', auth, (req, res) => {
     const result = stmtUpdateList.run(JSON.stringify(items), req.user.id, name);
     if (result.changes === 0) return res.status(404).json({ message: 'List not found' });
     io.emit('list:updated', { userId: req.user.id, name });
-    res.json({ name, items });
-  } catch (err) {
-    res.status(400).json({ message: err.message || 'Update failed' });
-  }
-});
-
-app.delete('/api/lists/:name', auth, (req, res) => {
-  const { name } = req.params;
-  const result = stmtDeleteList.run(req.user.id, name);
-  if (result.changes === 0) return res.status(404).json({ message: 'List not found' });
-  io.emit('list:deleted', { userId: req.user.id, name });
-  res.json({ ok: true });
-});
-
-// Socket.IO
-io.on('connection', (socket) => {
-  console.log('Client connected', socket.id);
-  socket.on('disconnect', () => console.log('Client disconnected', socket.id));
-});
-
-// Fallback to index.html for SPA routes
-app.get('*', (req, res, next) => {
-  // Only handle GET requests that accept HTML
-  if (req.method !== 'GET') return next();
-  const accept = req.headers.accept || '';
-  if (!accept.includes('text/html')) return next();
-  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
-});
-
-// Start server
-server.listen(PORT, () => console.log(`Server listening on http://localhost:${PORT} (mode: sqlite)`));
+    res.json({ name,
