@@ -7,16 +7,14 @@ services:
     buildCommand: npm ci
     startCommand: npm start
     healthCheckPath: /health
-    disk:
-      name: data
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: SQLITE_PATH
-        value: /data/db.sqlite
+        value: /tmp/db.sqlite
       - key: COOKIE_SECURE
         value: "true"
       - key: JWT_SECRET
         generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: https://justingosnell.github.io
