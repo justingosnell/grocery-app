@@ -51,6 +51,8 @@ function normalizeListPayload(payload) {
     name,
     description: payload.description ? String(payload.description).trim() : null,
     ownerId: payload.ownerId || null,
+    ownerEmail: payload.ownerEmail ? String(payload.ownerEmail).trim().toLowerCase() : null,
+    ownerName: payload.ownerName ? String(payload.ownerName).trim() : null,
   };
 }
 
@@ -76,14 +78,45 @@ function normalizeItemPayload(payload) {
   };
 }
 
-async function listLists() {
+async function resolveOwnerId(client, payload) {
+  if (payload.ownerId) return payload.ownerId;
+  if (!payload.ownerEmail) return null;
+
+  const result = await client.query(`
+    insert into app_users (email, display_name)
+    values ($1, $2)
+    on conflict (email) do update
+    set display_name = coalesce(excluded.display_name, app_users.display_name)
+    returning id
+  `, [payload.ownerEmail, payload.ownerName]);
+
+  return result.rows[0].id;
+}
+
+async function listLists(filters = {}) {
   return withClient(async (client) => {
+    const ownerEmail = filters.ownerEmail ? String(filters.ownerEmail).trim().toLowerCase() : null;
+    const ownerId = filters.ownerId || null;
+    const values = [];
+    const where = ['l.is_archived = false'];
+
+    if (ownerEmail) {
+      values.push(ownerEmail);
+      where.push(`u.email = $${values.length}`);
+    }
+
+    if (ownerId) {
+      values.push(ownerId);
+      where.push(`l.owner_id = $${values.length}`);
+    }
+
     const lists = await client.query(`
-      select *
+      select l.*
       from grocery_lists
-      where is_archived = false
-      order by updated_at desc
-    `);
+      l left join app_users u on u.id = l.owner_id
+      where ${where.join(' and ')}
+      order by l.updated_at desc
+    `, values);
 
     if (lists.rows.length === 0) return [];
 
@@ -126,11 +159,42 @@ async function createList(payload) {
   const rawItems = Array.isArray(payload.items) ? payload.items : [];
 
   return withTransaction(async (client) => {
-    const list = await client.query(`
-      insert into grocery_lists (owner_id, name, description)
-      values ($1, $2, $3)
-      returning *
-    `, [listPayload.ownerId, listPayload.name, listPayload.description]);
+    const ownerId = await resolveOwnerId(client, listPayload);
+    let list;
+
+    if (ownerId) {
+      list = await client.query(`
+        select *
+        from grocery_lists
+        where owner_id = $1
+          and lower(name) = lower($2)
+          and is_archived = false
+        limit 1
+      `, [ownerId, listPayload.name]);
+
+      if (list.rows.length > 0) {
+        list = await client.query(`
+          update grocery_lists
+          set name = $2, description = $3
+          where id = $1
+          returning *
+        `, [list.rows[0].id, listPayload.name, listPayload.description]);
+      } else {
+        list = await client.query(`
+          insert into grocery_lists (owner_id, name, description)
+          values ($1, $2, $3)
+          returning *
+        `, [ownerId, listPayload.name, listPayload.description]);
+      }
+
+      await client.query('delete from grocery_items where list_id = $1', [list.rows[0].id]);
+    } else {
+      list = await client.query(`
+        insert into grocery_lists (owner_id, name, description)
+        values ($1, $2, $3)
+        returning *
+      `, [ownerId, listPayload.name, listPayload.description]);
+    }
 
     const items = [];
     for (const [index, rawItem] of rawItems.entries()) {
