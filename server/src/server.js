@@ -40,6 +40,10 @@ function pathParts(request) {
   return url.pathname.split('/').filter(Boolean);
 }
 
+function queryParams(request) {
+  return new URL(request.url, `http://${request.headers.host || 'localhost'}`).searchParams;
+}
+
 async function route(request, response) {
   const headers = corsHeaders(request);
 
@@ -67,7 +71,13 @@ async function route(request, response) {
 
   if (parts.length === 2 && parts[1] === 'lists') {
     if (request.method === 'GET') {
-      send(response, 200, { lists: await listLists() }, headers);
+      const query = queryParams(request);
+      send(response, 200, {
+        lists: await listLists({
+          ownerEmail: query.get('ownerEmail'),
+          ownerId: query.get('ownerId'),
+        }),
+      }, headers);
       return;
     }
 
