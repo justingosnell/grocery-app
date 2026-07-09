@@ -4,13 +4,25 @@
   "description": "A modern grocery list creator with emoji support",
   "main": "index.html",
   "scripts": {
-    "dev": "tailwindcss -i ./src/input.css -o ./dist/output.css --watch",
-    "build": "tailwindcss -i ./src/input.css -o ./dist/output.css --minify"
+    "dev": "vite --host 127.0.0.1 --port 3000 --strictPort",
+    "tailwind:dev": "tailwindcss -i ./src/input.css -o ./src/tailwind.css --watch",
+    "build": "npm run tailwind:build && vite build && node scripts/inline-build-css.mjs",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "tailwind:build": "tailwindcss -i ./src/input.css -o ./src/tailwind.css --minify"
   },
-  "keywords": ["grocery", "list", "pwa", "tailwind"],
+  "keywords": [
+    "grocery",
+    "list",
+    "pwa",
+    "tailwind"
+  ],
   "author": "",
   "license": "MIT",
+  "dependencies": {
+    "@clerk/clerk-js": "^6.25.1"
+  },
   "devDependencies": {
-    "tailwindcss": "^3.4.0"
+    "tailwindcss": "^3.4.0",
+    "vite": "^7.0.0"
   }
 }

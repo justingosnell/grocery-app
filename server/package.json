@@ -7,12 +7,13 @@
   "scripts": {
     "start": "node src/server.js",
     "migrate": "node src/migrate.js",
-    "check": "node --check src/server.js && node --check src/migrate.js"
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/lists.js && node --check src/db.js && node --check src/http.js && node --check src/migrate.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "@clerk/backend": "^3.11.2",
     "pg": "^8.22.0"
   }
 }

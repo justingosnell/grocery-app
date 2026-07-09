@@ -8,14 +8,10 @@
   "theme_color": "#3b82f6",
   "icons": [
     {
-      "src": "/icons/icon-192x192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "/icons/icon-512x512.png",
-      "sizes": "512x512",
-      "type": "image/png"
+      "src": "./icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     }
   ],
   "shortcuts": [
@@ -23,13 +19,7 @@
       "name": "Add New Item",
       "short_name": "New Item",
       "description": "Quickly add a new item to your list.",
-      "url": "/?add_item=true",
-      "icons": [
-        {
-          "src": "/icons/shortcut-add.png",
-          "sizes": "96x96"
-        }
-      ]
+      "url": "/?add_item=true"
     },
     {
       "name": "View Saved Lists",

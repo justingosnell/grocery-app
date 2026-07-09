@@ -51,6 +51,7 @@ function normalizeListPayload(payload) {
     name,
     description: payload.description ? String(payload.description).trim() : null,
     ownerId: payload.ownerId || null,
+    ownerClerkId: payload.ownerClerkId ? String(payload.ownerClerkId).trim() : null,
     ownerEmail: payload.ownerEmail ? String(payload.ownerEmail).trim().toLowerCase() : null,
     ownerName: payload.ownerName ? String(payload.ownerName).trim() : null,
   };
@@ -80,15 +81,16 @@ function normalizeItemPayload(payload) {
 
 async function resolveOwnerId(client, payload) {
   if (payload.ownerId) return payload.ownerId;
-  if (!payload.ownerEmail) return null;
+  if (!payload.ownerClerkId && !payload.ownerEmail) return null;
 
   const result = await client.query(`
-    insert into app_users (email, display_name)
-    values ($1, $2)
-    on conflict (email) do update
-    set display_name = coalesce(excluded.display_name, app_users.display_name)
+    insert into app_users (clerk_user_id, email, display_name)
+    values ($1, $2, $3)
+    on conflict (clerk_user_id) do update
+    set email = coalesce(excluded.email, app_users.email),
+        display_name = coalesce(excluded.display_name, app_users.display_name)
     returning id
-  `, [payload.ownerEmail, payload.ownerName]);
+  `, [payload.ownerClerkId, payload.ownerEmail, payload.ownerName]);
 
   return result.rows[0].id;
 }
@@ -96,9 +98,15 @@ async function resolveOwnerId(client, payload) {
 async function listLists(filters = {}) {
   return withClient(async (client) => {
     const ownerEmail = filters.ownerEmail ? String(filters.ownerEmail).trim().toLowerCase() : null;
+    const ownerClerkId = filters.ownerClerkId ? String(filters.ownerClerkId).trim() : null;
     const ownerId = filters.ownerId || null;
     const values = [];
     const where = ['l.is_archived = false'];
+
+    if (ownerClerkId) {
+      values.push(ownerClerkId);
+      where.push(`u.clerk_user_id = $${values.length}`);
+    }
 
     if (ownerEmail) {
       values.push(ownerEmail);
@@ -138,9 +146,32 @@ async function listLists(filters = {}) {
   });
 }
 
-async function getList(id) {
+function ownerWhere(filters = {}, values = []) {
+  const clauses = [];
+  if (filters.ownerClerkId) {
+    values.push(String(filters.ownerClerkId).trim());
+    clauses.push(`u.clerk_user_id = $${values.length}`);
+  }
+  if (filters.ownerEmail) {
+    values.push(String(filters.ownerEmail).trim().toLowerCase());
+    clauses.push(`u.email = $${values.length}`);
+  }
+  if (filters.ownerId) {
+    values.push(filters.ownerId);
+    clauses.push(`l.owner_id = $${values.length}`);
+  }
+  return clauses.length ? ` and ${clauses.join(' and ')}` : '';
+}
+
+async function getList(id, filters = {}) {
   return withClient(async (client) => {
-    const list = await client.query('select * from grocery_lists where id = $1', [id]);
+    const values = [id];
+    const list = await client.query(`
+      select l.*
+      from grocery_lists l
+      left join app_users u on u.id = l.owner_id
+      where l.id = $1${ownerWhere(filters, values)}
+    `, values);
     if (list.rows.length === 0) return null;
 
     const items = await client.query(`
@@ -229,24 +260,40 @@ async function updateList(id, payload) {
       fields.push(`is_archived = $${values.length}`);
     }
 
-    if (fields.length === 0) return getList(id);
+    const filters = {
+      ownerClerkId: payload.ownerClerkId,
+      ownerEmail: payload.ownerEmail,
+      ownerId: payload.ownerId,
+    };
+
+    if (fields.length === 0) return getList(id, filters);
 
     values.push(id);
+    const ownerValues = [...values];
     const result = await client.query(`
-      update grocery_lists
+      update grocery_lists l
       set ${fields.join(', ')}
-      where id = $${values.length}
-      returning *
-    `, values);
+      from app_users u
+      where l.id = $${values.length}
+        and u.id = l.owner_id${ownerWhere(filters, ownerValues)}
+      returning l.*
+    `, ownerValues);
 
     if (result.rows.length === 0) return null;
-    return getList(id);
+    return getList(id, filters);
   });
 }
 
-async function deleteList(id) {
+async function deleteList(id, filters = {}) {
   return withClient(async (client) => {
-    const result = await client.query('delete from grocery_lists where id = $1 returning id', [id]);
+    const values = [id];
+    const result = await client.query(`
+      delete from grocery_lists l
+      using app_users u
+      where l.id = $1
+        and u.id = l.owner_id${ownerWhere(filters, values)}
+      returning l.id
+    `, values);
     return result.rows.length > 0;
   });
 }
@@ -285,7 +332,18 @@ async function insertItem(client, listId, item) {
 async function createItem(listId, payload) {
   const item = normalizeItemPayload(payload);
   return withClient(async (client) => {
-    const exists = await client.query('select id from grocery_lists where id = $1', [listId]);
+    const filters = {
+      ownerClerkId: payload.ownerClerkId,
+      ownerEmail: payload.ownerEmail,
+      ownerId: payload.ownerId,
+    };
+    const values = [listId];
+    const exists = await client.query(`
+      select l.id
+      from grocery_lists l
+      left join app_users u on u.id = l.owner_id
+      where l.id = $1${ownerWhere(filters, values)}
+    `, values);
     if (exists.rows.length === 0) return null;
     return mapItem(await insertItem(client, listId, item));
   });
@@ -310,6 +368,11 @@ async function updateItem(id, payload) {
       sortOrder: 'sort_order',
       completed: 'completed',
     };
+    const filters = {
+      ownerClerkId: payload.ownerClerkId,
+      ownerEmail: payload.ownerEmail,
+      ownerId: payload.ownerId,
+    };
 
     for (const [key, column] of Object.entries(allowed)) {
       if (payload[key] === undefined) continue;
@@ -326,25 +389,44 @@ async function updateItem(id, payload) {
     }
 
     if (fields.length === 0) {
-      const current = await client.query('select * from grocery_items where id = $1', [id]);
+      const ownerValues = [id];
+      const current = await client.query(`
+        select i.*
+        from grocery_items i
+        join grocery_lists l on l.id = i.list_id
+        left join app_users u on u.id = l.owner_id
+        where i.id = $1${ownerWhere(filters, ownerValues)}
+      `, ownerValues);
       return current.rows[0] ? mapItem(current.rows[0]) : null;
     }
 
     values.push(id);
+    const ownerValues = [...values];
     const result = await client.query(`
-      update grocery_items
+      update grocery_items i
       set ${fields.join(', ')}
-      where id = $${values.length}
-      returning *
-    `, values);
+      from grocery_lists l
+      left join app_users u on u.id = l.owner_id
+      where i.id = $${values.length}
+        and l.id = i.list_id${ownerWhere(filters, ownerValues)}
+      returning i.*
+    `, ownerValues);
 
     return result.rows[0] ? mapItem(result.rows[0]) : null;
   });
 }
 
-async function deleteItem(id) {
+async function deleteItem(id, filters = {}) {
   return withClient(async (client) => {
-    const result = await client.query('delete from grocery_items where id = $1 returning id', [id]);
+    const values = [id];
+    const result = await client.query(`
+      delete from grocery_items i
+      using grocery_lists l, app_users u
+      where i.id = $1
+        and l.id = i.list_id
+        and u.id = l.owner_id${ownerWhere(filters, values)}
+      returning i.id
+    `, values);
     return result.rows.length > 0;
   });
 }
