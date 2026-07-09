@@ -9,10 +9,12 @@ Set these variables in Northflank:
 ```bash
 DATABASE_URL=postgres://...
 CORS_ORIGIN=https://your-frontend.vercel.app
+CLERK_SECRET_KEY=sk_test_...
+CLERK_AUTHORIZED_PARTIES=https://your-frontend.vercel.app
 PORT=8080
 ```
 
-`DATABASE_URL` should point to Neon. `CORS_ORIGIN` can be a comma-separated list during testing.
+`DATABASE_URL` should point to Neon. `CORS_ORIGIN` can be a comma-separated list during testing. `CLERK_AUTHORIZED_PARTIES` is optional but recommended; use your Vercel frontend origin.
 
 ## Commands
 
@@ -35,4 +37,3 @@ Northflank can deploy this folder with the included `Dockerfile`. The API listen
 - `POST /api/lists/:id/items`
 - `PUT /api/items/:id`
 - `DELETE /api/items/:id`
-

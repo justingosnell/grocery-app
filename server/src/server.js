@@ -9,6 +9,7 @@ const {
   updateItem,
   updateList,
 } = require('./lists');
+const { requireAuth } = require('./auth');
 const { methodNotAllowed, notFound, parseJson, send } = require('./http');
 const { pool } = require('./db');
 
@@ -40,10 +41,6 @@ function pathParts(request) {
   return url.pathname.split('/').filter(Boolean);
 }
 
-function queryParams(request) {
-  return new URL(request.url, `http://${request.headers.host || 'localhost'}`).searchParams;
-}
-
 async function route(request, response) {
   const headers = corsHeaders(request);
 
@@ -69,21 +66,26 @@ async function route(request, response) {
     return;
   }
 
+  const auth = await requireAuth(request);
+  const ownerScope = { ownerClerkId: auth.userId };
+
   if (parts.length === 2 && parts[1] === 'lists') {
     if (request.method === 'GET') {
-      const query = queryParams(request);
       send(response, 200, {
-        lists: await listLists({
-          ownerEmail: query.get('ownerEmail'),
-          ownerId: query.get('ownerId'),
-        }),
+        lists: await listLists(ownerScope),
       }, headers);
       return;
     }
 
     if (request.method === 'POST') {
       const payload = await parseJson(request);
-      send(response, 201, { list: await createList(payload) }, headers);
+      send(response, 201, {
+        list: await createList({
+          ...payload,
+          ownerClerkId: auth.userId,
+          ownerEmail: auth.email || payload.ownerEmail,
+        }),
+      }, headers);
       return;
     }
 
@@ -95,7 +97,7 @@ async function route(request, response) {
     const id = parts[2];
 
     if (request.method === 'GET') {
-      const list = await getList(id);
+      const list = await getList(id, ownerScope);
       if (!list) {
         notFound(response);
         return;
@@ -106,7 +108,7 @@ async function route(request, response) {
 
     if (request.method === 'PUT' || request.method === 'PATCH') {
       const payload = await parseJson(request);
-      const list = await updateList(id, payload);
+      const list = await updateList(id, { ...payload, ...ownerScope });
       if (!list) {
         notFound(response);
         return;
@@ -116,7 +118,7 @@ async function route(request, response) {
     }
 
     if (request.method === 'DELETE') {
-      const deleted = await deleteList(id);
+      const deleted = await deleteList(id, ownerScope);
       if (!deleted) {
         notFound(response);
         return;
@@ -136,7 +138,7 @@ async function route(request, response) {
     }
 
     const payload = await parseJson(request);
-    const item = await createItem(parts[2], payload);
+    const item = await createItem(parts[2], { ...payload, ...ownerScope });
     if (!item) {
       notFound(response);
       return;
@@ -150,7 +152,7 @@ async function route(request, response) {
 
     if (request.method === 'PUT' || request.method === 'PATCH') {
       const payload = await parseJson(request);
-      const item = await updateItem(id, payload);
+      const item = await updateItem(id, { ...payload, ...ownerScope });
       if (!item) {
         notFound(response);
         return;
@@ -160,7 +162,7 @@ async function route(request, response) {
     }
 
     if (request.method === 'DELETE') {
-      const deleted = await deleteItem(id);
+      const deleted = await deleteItem(id, ownerScope);
       if (!deleted) {
         notFound(response);
         return;
