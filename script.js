@@ -737,8 +737,18 @@ async function openAuthModal(mode = 'sign-in') {
     openAccountModal();
     return;
   }
-  if (mode === 'sign-up') client.openSignUp();
-  else client.openSignIn();
+  const redirectOptions = {
+    fallbackRedirectUrl: window.location.href,
+    forceRedirectUrl: window.location.href,
+  };
+  try {
+    if (mode === 'sign-up') client.openSignUp(redirectOptions);
+    else client.openSignIn(redirectOptions);
+  } catch (error) {
+    console.error('Clerk modal error:', error);
+    if (mode === 'sign-up') await client.redirectToSignUp?.(redirectOptions);
+    else await client.redirectToSignIn?.(redirectOptions);
+  }
 }
 
 function openAccountModal() {
