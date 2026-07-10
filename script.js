@@ -68,6 +68,7 @@ const clerkPublishableKey = import.meta.env?.VITE_CLERK_PUBLISHABLE_KEY || windo
 const apiBaseUrl = (import.meta.env?.VITE_API_URL || window.GROCERY_API_URL || '').replace(/\/+$/, '');
 let clerkClient = null;
 let clerkClientPromise = null;
+let mountedAuthMode = null;
 let autocompleteBlurTimeout = null;
 let productLookupTimer = null;
 let listNamePlaceholderTimer = null;
@@ -122,6 +123,7 @@ const elements = {
   authModeToggleBtn: document.getElementById('authModeToggleBtn'),
   authModalTitle: document.getElementById('authModalTitle'),
   authModalSubtitle: document.getElementById('authModalSubtitle'),
+  authClerkMount: document.getElementById('authClerkMount'),
   accountPanel: document.getElementById('accountPanel'),
   accountEmailText: document.getElementById('accountEmailText'),
   accountSignOutBtn: document.getElementById('accountSignOutBtn'),
@@ -725,6 +727,25 @@ function setAuthMode(mode) {
   }
 }
 
+function getAuthRedirectOptions() {
+  return {
+    fallbackRedirectUrl: window.location.href,
+    forceRedirectUrl: window.location.href,
+  };
+}
+
+function unmountClerkAuth() {
+  if (!elements.authClerkMount || !clerkClient || !mountedAuthMode) return;
+  try {
+    if (mountedAuthMode === 'sign-up') clerkClient.unmountSignUp?.(elements.authClerkMount);
+    else clerkClient.unmountSignIn?.(elements.authClerkMount);
+  } catch (error) {
+    console.warn('Could not unmount Clerk auth:', error);
+  }
+  elements.authClerkMount.innerHTML = '';
+  mountedAuthMode = null;
+}
+
 async function openAuthModal(mode = 'sign-in') {
   if (!clerkPublishableKey) {
     showAlert('Set VITE_CLERK_PUBLISHABLE_KEY to enable Clerk.', 'error');
@@ -737,13 +758,18 @@ async function openAuthModal(mode = 'sign-in') {
     openAccountModal();
     return;
   }
-  const redirectOptions = {
-    fallbackRedirectUrl: window.location.href,
-    forceRedirectUrl: window.location.href,
-  };
+  const redirectOptions = getAuthRedirectOptions();
+  setAuthMode(mode);
+  unmountClerkAuth();
+  if (elements.authForm) elements.authForm.classList.add('hidden');
+  if (elements.accountPanel) elements.accountPanel.classList.add('hidden');
+  if (elements.authClerkMount) elements.authClerkMount.classList.remove('hidden');
+  if (elements.authModeToggleBtn) elements.authModeToggleBtn.classList.remove('hidden');
+  setModal(elements.authModal, true);
   try {
-    if (mode === 'sign-up') client.openSignUp(redirectOptions);
-    else client.openSignIn(redirectOptions);
+    if (mode === 'sign-up') client.mountSignUp(elements.authClerkMount, redirectOptions);
+    else client.mountSignIn(elements.authClerkMount, { ...redirectOptions, withSignUp: true });
+    mountedAuthMode = mode;
   } catch (error) {
     console.error('Clerk modal error:', error);
     if (mode === 'sign-up') await client.redirectToSignUp?.(redirectOptions);
@@ -756,9 +782,11 @@ function openAccountModal() {
     openAuthModal('sign-in');
     return;
   }
+  unmountClerkAuth();
   if (elements.authModalTitle) elements.authModalTitle.textContent = 'Account';
   if (elements.authModalSubtitle) elements.authModalSubtitle.textContent = 'Manage your current Clerk session.';
   if (elements.authForm) elements.authForm.classList.add('hidden');
+  if (elements.authClerkMount) elements.authClerkMount.classList.add('hidden');
   if (elements.accountPanel) elements.accountPanel.classList.remove('hidden');
   if (elements.authModeToggleBtn) elements.authModeToggleBtn.classList.add('hidden');
   if (elements.accountEmailText) elements.accountEmailText.textContent = state.user.email || state.user.name || 'Signed in user';
@@ -767,8 +795,10 @@ function openAccountModal() {
 
 function closeAuthModal() {
   setModal(elements.authModal, false);
+  unmountClerkAuth();
   elements.authForm?.reset();
   if (elements.authForm) elements.authForm.classList.remove('hidden');
+  if (elements.authClerkMount) elements.authClerkMount.classList.add('hidden');
   if (elements.accountPanel) elements.accountPanel.classList.add('hidden');
   if (elements.authModeToggleBtn) elements.authModeToggleBtn.classList.remove('hidden');
   setAuthMode('sign-in');
@@ -1440,7 +1470,9 @@ function bindEvents() {
   elements.authModal?.addEventListener('click', (event) => {
     if (event.target === elements.authModal) closeAuthModal();
   });
-  elements.authModeToggleBtn?.addEventListener('click', () => setAuthMode(state.authMode === 'sign-up' ? 'sign-in' : 'sign-up'));
+  elements.authModeToggleBtn?.addEventListener('click', () => {
+    void openAuthModal(state.authMode === 'sign-up' ? 'sign-in' : 'sign-up');
+  });
   elements.itemSearchInput?.addEventListener('input', () => {
     state.search = elements.itemSearchInput.value;
     renderCurrentList();
