@@ -863,7 +863,9 @@ async function submitAuth(event) {
   renderAuth();
 
   try {
-    const signIn = await client.signIn.create({ identifier: email, password });
+    const signInResource = client.client?.signIn;
+    if (!signInResource) throw new Error('Clerk sign-in is not ready yet. Please try again.');
+    const signIn = await signInResource.create({ identifier: email, password });
     if (signIn.status === 'complete' && signIn.createdSessionId) {
       await client.setActive({ session: signIn.createdSessionId });
       state.session = client.session || null;
