@@ -101,6 +101,9 @@ const elements = {
   savedDrawerOverlay: document.getElementById('savedDrawerOverlay'),
   closeSavedDrawerBtn: document.getElementById('closeSavedDrawerBtn'),
   bottomSavedListsToggleBtn: document.getElementById('bottomSavedListsToggleBtn'),
+  bottomUserProfile: document.getElementById('bottomUserProfile'),
+  bottomUserAvatar: document.getElementById('bottomUserAvatar'),
+  bottomUserName: document.getElementById('bottomUserName'),
   quickAddForm: document.getElementById('quickAddForm'),
   quickAddInput: document.getElementById('quickAddInput'),
   authStatusPill: document.getElementById('authStatusPill'),
@@ -1129,20 +1132,36 @@ function renderAuth() {
     : state.authLoading
       ? 'Checking auth...'
       : signedIn
-        ? avatarInitials(state.user)
+        ? 'Log out'
         : 'Sign in';
 
   elements.authStatusPill.textContent = label;
-  elements.authStatusPill.title = signedIn ? `Signed in as ${state.user.email || state.user.name || 'user'}` : label;
-  elements.authStatusPill.setAttribute('aria-label', signedIn ? 'Open account' : 'Sign in');
+  elements.authStatusPill.title = signedIn ? `Log out ${state.user.name || state.user.email || 'user'}` : label;
+  elements.authStatusPill.setAttribute('aria-label', signedIn ? 'Log out' : 'Sign in');
   elements.authStatusPill.setAttribute('aria-disabled', String(state.authLoading));
   elements.authStatusPill.className = signedIn
-    ? 'flex h-10 w-10 items-center justify-center rounded-full border border-[#E5E7EB] bg-[#2E7D32] text-sm font-semibold text-white shadow-sm shadow-[#1F2937]/10 transition hover:bg-[#1B5E20]'
+    ? 'rounded-full border border-[#E53935]/25 bg-[#E53935]/10 px-3 py-1 text-sm font-semibold text-[#E53935] transition hover:bg-[#E53935]/15'
     : !clerkPublishableKey
       ? 'rounded-full border border-[#FBC02D] bg-[#FBC02D]/20 px-3 py-1 text-sm font-semibold text-[#1F2937]'
       : 'rounded-full border border-[#E5E7EB] bg-[#F1F7F2] px-3 py-1 text-sm font-semibold text-[#2E7D32] transition hover:bg-[#C8E6C9]/35';
   elements.authStatusPill.classList.toggle('pointer-events-none', state.authLoading);
   elements.authStatusPill.classList.toggle('opacity-60', state.authLoading);
+
+  if (elements.bottomUserProfile) {
+    elements.bottomUserProfile.classList.toggle('hidden', !signedIn);
+    elements.bottomUserProfile.classList.toggle('flex', signedIn);
+  }
+  if (elements.bottomUserName) {
+    elements.bottomUserName.textContent = signedIn ? (state.user.name || state.user.email || 'Grocery user') : '';
+  }
+  if (elements.bottomUserAvatar) {
+    if (signedIn && state.user.imageUrl) {
+      elements.bottomUserAvatar.innerHTML = `<img src="${escapeHtml(state.user.imageUrl)}" alt="" class="h-full w-full object-cover" loading="lazy" />`;
+    } else {
+      elements.bottomUserAvatar.textContent = signedIn ? avatarInitials(state.user) : '';
+      elements.bottomUserAvatar.innerHTML = signedIn ? elements.bottomUserAvatar.innerHTML : '';
+    }
+  }
 }
 
 function renderAll() {
@@ -1513,7 +1532,7 @@ function bindEvents() {
   elements.authStatusPill?.addEventListener('click', (event) => {
     event.preventDefault();
     if (state.authLoading) return;
-    if (state.session && state.user) openAccountModal();
+    if (state.session && state.user) void signOut();
     else void openAuthModal('sign-in');
   });
   elements.authForm?.addEventListener('submit', submitAuth);
