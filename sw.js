@@ -1,8 +1,7 @@
-const CACHE_NAME = 'grocery-list-v2';
+const CACHE_NAME = 'grocery-list-v3';
 const URLS_TO_CACHE = [
   './',
   './index.html',
-  './script.js',
   './manifest.json',
   './icons/icon.svg',
 ];
@@ -27,10 +26,7 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-
-      return fetch(event.request).then((response) => {
+    fetch(event.request).then((response) => {
         if (!response || response.status !== 200 || !['basic', 'cors'].includes(response.type)) {
           return response;
         }
@@ -38,12 +34,12 @@ self.addEventListener('fetch', (event) => {
         const copy = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
         return response;
-      });
-    }).catch(() => {
+    }).catch(() => caches.match(event.request).then((cached) => {
+      if (cached) return cached;
       if (event.request.destination === 'document') {
         return caches.match('./index.html');
       }
       return undefined;
-    })
+    }))
   );
 });
