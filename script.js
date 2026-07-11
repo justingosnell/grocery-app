@@ -742,6 +742,22 @@ function clerkErrorMessage(error, fallback = 'Authentication failed.') {
   return firstError?.longMessage || firstError?.message || error?.message || fallback;
 }
 
+async function completeClerkSignIn(client, signIn) {
+  if (signIn.status === 'complete' && signIn.createdSessionId) {
+    await client.setActive({ session: signIn.createdSessionId });
+    state.session = client.session || null;
+    state.user = clerkUserProfile(client.user);
+    state.savedLists = loadData(savedListsStorageKey(), state.savedLists);
+    hydratePurchaseMemory();
+    closeAuthModal();
+    await loadAccountSavedLists({ silent: true });
+    renderAll();
+    showAlert('Signed in.', 'info');
+    return true;
+  }
+  return false;
+}
+
 function unmountClerkAuth() {
   if (!elements.authClerkMount || !clerkClient || !mountedAuthMode) return;
   try {
@@ -865,19 +881,14 @@ async function submitAuth(event) {
   try {
     const signInResource = client.client?.signIn;
     if (!signInResource) throw new Error('Clerk sign-in is not ready yet. Please try again.');
-    const signIn = await signInResource.create({ identifier: email, password });
-    if (signIn.status === 'complete' && signIn.createdSessionId) {
-      await client.setActive({ session: signIn.createdSessionId });
-      state.session = client.session || null;
-      state.user = clerkUserProfile(client.user);
-      state.savedLists = loadData(savedListsStorageKey(), state.savedLists);
-      hydratePurchaseMemory();
-      closeAuthModal();
-      await loadAccountSavedLists({ silent: true });
-      renderAll();
-      showAlert('Signed in.', 'info');
-      return;
+    let signIn = await signInResource.create({ identifier: email, password });
+    if (await completeClerkSignIn(client, signIn)) return;
+
+    if (signIn.status === 'needs_first_factor') {
+      signIn = await signIn.attemptFirstFactor({ strategy: 'password', password });
+      if (await completeClerkSignIn(client, signIn)) return;
     }
+
     showAlert('This sign-in needs an extra verification step. Use Clerk sign up or update your Clerk sign-in settings.', 'error');
   } catch (error) {
     console.error('Clerk password sign-in error:', error);
