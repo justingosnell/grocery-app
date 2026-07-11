@@ -734,6 +734,11 @@ function getAuthRedirectOptions() {
   };
 }
 
+function clerkErrorMessage(error, fallback = 'Authentication failed.') {
+  const firstError = error?.errors?.[0];
+  return firstError?.longMessage || firstError?.message || error?.message || fallback;
+}
+
 function unmountClerkAuth() {
   if (!elements.authClerkMount || !clerkClient || !mountedAuthMode) return;
   try {
@@ -758,22 +763,28 @@ async function openAuthModal(mode = 'sign-in') {
     openAccountModal();
     return;
   }
-  const redirectOptions = getAuthRedirectOptions();
   setAuthMode(mode);
   unmountClerkAuth();
-  if (elements.authForm) elements.authForm.classList.add('hidden');
   if (elements.accountPanel) elements.accountPanel.classList.add('hidden');
-  if (elements.authClerkMount) elements.authClerkMount.classList.remove('hidden');
   if (elements.authModeToggleBtn) elements.authModeToggleBtn.classList.remove('hidden');
   setModal(elements.authModal, true);
+
+  if (mode === 'sign-in') {
+    if (elements.authForm) elements.authForm.classList.remove('hidden');
+    if (elements.authClerkMount) elements.authClerkMount.classList.add('hidden');
+    elements.authEmailInput?.focus();
+    return;
+  }
+
+  const redirectOptions = getAuthRedirectOptions();
+  if (elements.authForm) elements.authForm.classList.add('hidden');
+  if (elements.authClerkMount) elements.authClerkMount.classList.remove('hidden');
   try {
-    if (mode === 'sign-up') client.mountSignUp(elements.authClerkMount, redirectOptions);
-    else client.mountSignIn(elements.authClerkMount, { ...redirectOptions, withSignUp: true });
+    client.mountSignUp(elements.authClerkMount, redirectOptions);
     mountedAuthMode = mode;
   } catch (error) {
-    console.error('Clerk modal error:', error);
-    if (mode === 'sign-up') await client.redirectToSignUp?.(redirectOptions);
-    else await client.redirectToSignIn?.(redirectOptions);
+    console.error('Clerk sign-up mount error:', error);
+    showAlert(clerkErrorMessage(error, 'Could not open sign up.'), 'error');
   }
 }
 
@@ -829,7 +840,48 @@ async function refreshAuthSession() {
 
 async function submitAuth(event) {
   event.preventDefault();
-  await openAuthModal(state.authMode);
+  if (state.authMode === 'sign-up') {
+    await openAuthModal('sign-up');
+    return;
+  }
+
+  const email = elements.authEmailInput?.value.trim();
+  const password = elements.authPasswordInput?.value;
+  if (!email || !password) {
+    showAlert('Enter your email and password.', 'error');
+    return;
+  }
+
+  const client = await configureAuthClient();
+  if (!client) return;
+
+  state.authLoading = true;
+  if (elements.authSubmitBtn) elements.authSubmitBtn.textContent = 'Signing in...';
+  renderAuth();
+
+  try {
+    const signIn = await client.signIn.create({ identifier: email, password });
+    if (signIn.status === 'complete' && signIn.createdSessionId) {
+      await client.setActive({ session: signIn.createdSessionId });
+      state.session = client.session || null;
+      state.user = clerkUserProfile(client.user);
+      state.savedLists = loadData(savedListsStorageKey(), state.savedLists);
+      hydratePurchaseMemory();
+      closeAuthModal();
+      await loadAccountSavedLists({ silent: true });
+      renderAll();
+      showAlert('Signed in.', 'info');
+      return;
+    }
+    showAlert('This sign-in needs an extra verification step. Use Clerk sign up or update your Clerk sign-in settings.', 'error');
+  } catch (error) {
+    console.error('Clerk password sign-in error:', error);
+    showAlert(clerkErrorMessage(error, 'Could not sign in.'), 'error');
+  } finally {
+    state.authLoading = false;
+    if (elements.authSubmitBtn) elements.authSubmitBtn.textContent = 'Sign in';
+    renderAuth();
+  }
 }
 
 async function signOut() {
