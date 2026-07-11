@@ -96,7 +96,14 @@
   </div>
 
   <div class="fixed inset-x-0 bottom-0 z-30 border-t border-[#E5E7EB] bg-white/95 backdrop-blur">
-    <div class="mx-auto flex max-w-5xl items-center justify-end px-4 py-3 sm:px-6">
+    <div class="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+      <div id="bottomUserProfile" class="hidden min-w-0 items-center gap-3">
+        <div id="bottomUserAvatar" class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#2E7D32] text-sm font-semibold text-white shadow-sm shadow-[#1F2937]/10"></div>
+        <div class="min-w-0">
+          <p id="bottomUserName" class="truncate text-sm font-semibold text-[#1F2937]"></p>
+          <p class="text-xs text-[#6B7280]">Signed in</p>
+        </div>
+      </div>
       <button id="bottomSavedListsToggleBtn" class="relative flex h-12 min-w-16 items-center justify-center rounded-2xl border border-[#E5E7EB] bg-[#C8E6C9]/55 px-3 text-sm font-semibold text-[#2E7D32] transition hover:bg-[#66BB6A]/20">Lists</button>
     </div>
   </div>
