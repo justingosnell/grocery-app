@@ -122,6 +122,7 @@ const elements = {
   authNameInput: document.getElementById('authNameInput'),
   authEmailInput: document.getElementById('authEmailInput'),
   authPasswordInput: document.getElementById('authPasswordInput'),
+  authCodeInput: document.getElementById('authCodeInput'),
   authSubmitBtn: document.getElementById('authSubmitBtn'),
   authModeToggleBtn: document.getElementById('authModeToggleBtn'),
   authModalTitle: document.getElementById('authModalTitle'),
@@ -141,6 +142,7 @@ let state = {
   user: null,
   authMode: 'sign-in',
   authLoading: false,
+  pendingSignIn: null,
   editingId: null,
   search: '',
   category: 'all',
@@ -711,22 +713,43 @@ async function configureAuthClient() {
 function setAuthMode(mode) {
   state.authMode = mode;
   const isSignUp = mode === 'sign-up';
+  const isSecondFactor = mode === 'second-factor';
   if (elements.authNameInput) {
     elements.authNameInput.classList.toggle('hidden', !isSignUp);
     elements.authNameInput.required = isSignUp;
   }
+  if (elements.authEmailInput) {
+    elements.authEmailInput.classList.toggle('hidden', isSecondFactor);
+    elements.authEmailInput.required = !isSecondFactor;
+  }
+  if (elements.authPasswordInput) {
+    elements.authPasswordInput.classList.toggle('hidden', isSecondFactor);
+    elements.authPasswordInput.required = !isSecondFactor;
+  }
+  if (elements.authCodeInput) {
+    elements.authCodeInput.classList.toggle('hidden', !isSecondFactor);
+    elements.authCodeInput.required = isSecondFactor;
+  }
   if (elements.authPasswordInput) {
     elements.authPasswordInput.autocomplete = isSignUp ? 'new-password' : 'current-password';
   }
-  if (elements.authModalTitle) elements.authModalTitle.textContent = isSignUp ? 'Create account' : 'Sign in';
+  if (elements.authModalTitle) {
+    elements.authModalTitle.textContent = isSecondFactor ? 'Check your email' : isSignUp ? 'Create account' : 'Sign in';
+  }
   if (elements.authModalSubtitle) {
-    elements.authModalSubtitle.textContent = isSignUp
+    elements.authModalSubtitle.textContent = isSecondFactor
+      ? 'Enter the code Clerk sent to your email.'
+      : isSignUp
       ? 'Create a Clerk account for this grocery app.'
       : 'Use your Clerk account.';
   }
-  if (elements.authSubmitBtn) elements.authSubmitBtn.textContent = isSignUp ? 'Sign up' : 'Sign in';
+  if (elements.authSubmitBtn) elements.authSubmitBtn.textContent = isSecondFactor ? 'Verify code' : isSignUp ? 'Sign up' : 'Sign in';
   if (elements.authModeToggleBtn) {
-    elements.authModeToggleBtn.textContent = isSignUp ? 'Already have an account? Sign in' : 'Need an account? Sign up';
+    elements.authModeToggleBtn.textContent = isSecondFactor
+      ? 'Back to sign in'
+      : isSignUp
+        ? 'Already have an account? Sign in'
+        : 'Need an account? Sign up';
   }
 }
 
@@ -774,6 +797,22 @@ async function completeClerkSignIn(client, signIn) {
   return false;
 }
 
+async function startEmailCodeSecondFactor(signIn) {
+  const emailFactor = (signIn.supportedSecondFactors || []).find((factor) => factor.strategy === 'email_code');
+  if (!emailFactor) return false;
+
+  const nextSignIn = await signIn.prepareSecondFactor({
+    strategy: 'email_code',
+    emailAddressId: emailFactor.emailAddressId,
+  });
+  state.pendingSignIn = nextSignIn;
+  setAuthMode('second-factor');
+  elements.authCodeInput.value = '';
+  elements.authCodeInput?.focus();
+  showAlert('Enter the email code Clerk sent you.', 'info');
+  return true;
+}
+
 function unmountClerkAuth() {
   if (!elements.authClerkMount || !clerkClient || !mountedAuthMode) return;
   try {
@@ -798,6 +837,7 @@ async function openAuthModal(mode = 'sign-in') {
     openAccountModal();
     return;
   }
+  if (mode === 'sign-in' || mode === 'sign-up') state.pendingSignIn = null;
   setAuthMode(mode);
   unmountClerkAuth();
   if (elements.accountPanel) elements.accountPanel.classList.add('hidden');
@@ -842,6 +882,7 @@ function openAccountModal() {
 function closeAuthModal() {
   setModal(elements.authModal, false);
   unmountClerkAuth();
+  state.pendingSignIn = null;
   elements.authForm?.reset();
   if (elements.authForm) elements.authForm.classList.remove('hidden');
   if (elements.authClerkMount) elements.authClerkMount.classList.add('hidden');
@@ -875,6 +916,44 @@ async function refreshAuthSession() {
 
 async function submitAuth(event) {
   event.preventDefault();
+  const client = await configureAuthClient();
+  if (!client) return;
+
+  if (state.authMode === 'second-factor') {
+    const code = elements.authCodeInput?.value.trim();
+    if (!code) {
+      showAlert('Enter the email verification code.', 'error');
+      return;
+    }
+    if (!state.pendingSignIn) {
+      showAlert('Start sign in again to request a new code.', 'error');
+      setAuthMode('sign-in');
+      return;
+    }
+
+    state.authLoading = true;
+    if (elements.authSubmitBtn) elements.authSubmitBtn.textContent = 'Verifying...';
+    renderAuth();
+
+    try {
+      const signIn = await state.pendingSignIn.attemptSecondFactor({ strategy: 'email_code', code });
+      if (await completeClerkSignIn(client, signIn)) {
+        state.pendingSignIn = null;
+        return;
+      }
+      state.pendingSignIn = signIn;
+      showAlert(signInStatusMessage(signIn), 'error');
+    } catch (error) {
+      console.error('Clerk email code verification error:', error);
+      showAlert(clerkErrorMessage(error, 'Could not verify the code.'), 'error');
+    } finally {
+      state.authLoading = false;
+      if (elements.authSubmitBtn) elements.authSubmitBtn.textContent = 'Verify code';
+      renderAuth();
+    }
+    return;
+  }
+
   if (state.authMode === 'sign-up') {
     await openAuthModal('sign-up');
     return;
@@ -886,9 +965,6 @@ async function submitAuth(event) {
     showAlert('Enter your email and password.', 'error');
     return;
   }
-
-  const client = await configureAuthClient();
-  if (!client) return;
 
   state.authLoading = true;
   if (elements.authSubmitBtn) elements.authSubmitBtn.textContent = 'Signing in...';
@@ -904,6 +980,8 @@ async function submitAuth(event) {
       signIn = await signIn.attemptFirstFactor({ strategy: 'password', password });
       if (await completeClerkSignIn(client, signIn)) return;
     }
+
+    if (signIn.status === 'needs_second_factor' && await startEmailCodeSecondFactor(signIn)) return;
 
     console.warn('Clerk sign-in did not complete:', signIn);
     showAlert(signInStatusMessage(signIn), 'error');
@@ -1572,7 +1650,7 @@ function bindEvents() {
     if (event.target === elements.authModal) closeAuthModal();
   });
   elements.authModeToggleBtn?.addEventListener('click', () => {
-    void openAuthModal(state.authMode === 'sign-up' ? 'sign-in' : 'sign-up');
+    void openAuthModal(state.authMode === 'sign-in' ? 'sign-up' : 'sign-in');
   });
   elements.itemSearchInput?.addEventListener('input', () => {
     state.search = elements.itemSearchInput.value;
