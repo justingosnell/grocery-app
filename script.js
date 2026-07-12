@@ -742,6 +742,22 @@ function clerkErrorMessage(error, fallback = 'Authentication failed.') {
   return firstError?.longMessage || firstError?.message || error?.message || fallback;
 }
 
+function signInStatusMessage(signIn) {
+  const firstFactors = (signIn.supportedFirstFactors || [])
+    .map((factor) => factor.strategy)
+    .filter(Boolean)
+    .join(', ');
+  const secondFactors = (signIn.supportedSecondFactors || [])
+    .map((factor) => factor.strategy)
+    .filter(Boolean)
+    .join(', ');
+  return [
+    `Clerk returned ${signIn.status || 'an unknown sign-in status'}.`,
+    firstFactors ? `First factors: ${firstFactors}.` : '',
+    secondFactors ? `Second factors: ${secondFactors}.` : '',
+  ].filter(Boolean).join(' ');
+}
+
 async function completeClerkSignIn(client, signIn) {
   if (signIn.status === 'complete' && signIn.createdSessionId) {
     await client.setActive({ session: signIn.createdSessionId });
@@ -881,7 +897,7 @@ async function submitAuth(event) {
   try {
     const signInResource = client.client?.signIn;
     if (!signInResource) throw new Error('Clerk sign-in is not ready yet. Please try again.');
-    let signIn = await signInResource.create({ identifier: email, password });
+    let signIn = await signInResource.create({ strategy: 'password', identifier: email, password });
     if (await completeClerkSignIn(client, signIn)) return;
 
     if (signIn.status === 'needs_first_factor') {
@@ -889,7 +905,8 @@ async function submitAuth(event) {
       if (await completeClerkSignIn(client, signIn)) return;
     }
 
-    showAlert('This sign-in needs an extra verification step. Use Clerk sign up or update your Clerk sign-in settings.', 'error');
+    console.warn('Clerk sign-in did not complete:', signIn);
+    showAlert(signInStatusMessage(signIn), 'error');
   } catch (error) {
     console.error('Clerk password sign-in error:', error);
     showAlert(clerkErrorMessage(error, 'Could not sign in.'), 'error');
