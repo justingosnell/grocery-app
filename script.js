@@ -143,6 +143,7 @@ let state = {
   authMode: 'sign-in',
   authLoading: false,
   pendingSignIn: null,
+  pendingSignUp: null,
   editingId: null,
   search: '',
   category: 'all',
@@ -713,39 +714,43 @@ async function configureAuthClient() {
 function setAuthMode(mode) {
   state.authMode = mode;
   const isSignUp = mode === 'sign-up';
+  const isSignUpVerification = mode === 'sign-up-verification';
   const isSecondFactor = mode === 'second-factor';
+  const isCodeStep = isSecondFactor || isSignUpVerification;
   if (elements.authNameInput) {
     elements.authNameInput.classList.toggle('hidden', !isSignUp);
     elements.authNameInput.required = isSignUp;
   }
   if (elements.authEmailInput) {
-    elements.authEmailInput.classList.toggle('hidden', isSecondFactor);
-    elements.authEmailInput.required = !isSecondFactor;
+    elements.authEmailInput.classList.toggle('hidden', isCodeStep);
+    elements.authEmailInput.required = !isCodeStep;
   }
   if (elements.authPasswordInput) {
-    elements.authPasswordInput.classList.toggle('hidden', isSecondFactor);
-    elements.authPasswordInput.required = !isSecondFactor;
+    elements.authPasswordInput.classList.toggle('hidden', isCodeStep);
+    elements.authPasswordInput.required = !isCodeStep;
   }
   if (elements.authCodeInput) {
-    elements.authCodeInput.classList.toggle('hidden', !isSecondFactor);
-    elements.authCodeInput.required = isSecondFactor;
+    elements.authCodeInput.classList.toggle('hidden', !isCodeStep);
+    elements.authCodeInput.required = isCodeStep;
   }
   if (elements.authPasswordInput) {
     elements.authPasswordInput.autocomplete = isSignUp ? 'new-password' : 'current-password';
   }
   if (elements.authModalTitle) {
-    elements.authModalTitle.textContent = isSecondFactor ? 'Check your email' : isSignUp ? 'Create account' : 'Sign in';
+    elements.authModalTitle.textContent = isCodeStep
+      ? (isSignUpVerification ? 'Verify your email' : 'Check your email')
+      : isSignUp ? 'Create account' : 'Sign in';
   }
   if (elements.authModalSubtitle) {
-    elements.authModalSubtitle.textContent = isSecondFactor
+    elements.authModalSubtitle.textContent = isCodeStep
       ? 'Enter the code Clerk sent to your email.'
       : isSignUp
       ? 'Create a Clerk account for this grocery app.'
       : 'Use your Clerk account.';
   }
-  if (elements.authSubmitBtn) elements.authSubmitBtn.textContent = isSecondFactor ? 'Verify code' : isSignUp ? 'Sign up' : 'Sign in';
+  if (elements.authSubmitBtn) elements.authSubmitBtn.textContent = isCodeStep ? 'Verify code' : isSignUp ? 'Sign up' : 'Sign in';
   if (elements.authModeToggleBtn) {
-    elements.authModeToggleBtn.textContent = isSecondFactor
+    elements.authModeToggleBtn.textContent = isCodeStep
       ? 'Back to sign in'
       : isSignUp
         ? 'Already have an account? Sign in'
@@ -781,6 +786,14 @@ function signInStatusMessage(signIn) {
   ].filter(Boolean).join(' ');
 }
 
+function signUpStatusMessage(signUp) {
+  return [
+    `Clerk returned ${signUp.status || 'an unknown sign-up status'}.`,
+    signUp.missingFields?.length ? `Missing fields: ${signUp.missingFields.join(', ')}.` : '',
+    signUp.unverifiedFields?.length ? `Unverified fields: ${signUp.unverifiedFields.join(', ')}.` : '',
+  ].filter(Boolean).join(' ');
+}
+
 async function completeClerkSignIn(client, signIn) {
   if (signIn.status === 'complete' && signIn.createdSessionId) {
     await client.setActive({ session: signIn.createdSessionId });
@@ -797,6 +810,22 @@ async function completeClerkSignIn(client, signIn) {
   return false;
 }
 
+async function completeClerkSignUp(client, signUp) {
+  if (signUp.status === 'complete' && signUp.createdSessionId) {
+    await client.setActive({ session: signUp.createdSessionId });
+    state.session = client.session || null;
+    state.user = clerkUserProfile(client.user);
+    state.savedLists = loadData(savedListsStorageKey(), {});
+    hydratePurchaseMemory();
+    closeAuthModal();
+    await loadAccountSavedLists({ silent: true });
+    renderAll();
+    showAlert('Account created.', 'info');
+    return true;
+  }
+  return false;
+}
+
 async function startEmailCodeSecondFactor(signIn) {
   const emailFactor = (signIn.supportedSecondFactors || []).find((factor) => factor.strategy === 'email_code');
   if (!emailFactor) return false;
@@ -807,6 +836,18 @@ async function startEmailCodeSecondFactor(signIn) {
   });
   state.pendingSignIn = nextSignIn;
   setAuthMode('second-factor');
+  elements.authCodeInput.value = '';
+  elements.authCodeInput?.focus();
+  showAlert('Enter the email code Clerk sent you.', 'info');
+  return true;
+}
+
+async function startEmailCodeSignUpVerification(signUp) {
+  if (!signUp?.unverifiedFields?.includes('email_address')) return false;
+  const nextSignUp = await signUp.prepareVerification({ strategy: 'email_code' });
+  state.pendingSignUp = nextSignUp;
+  state.pendingSignIn = null;
+  setAuthMode('sign-up-verification');
   elements.authCodeInput.value = '';
   elements.authCodeInput?.focus();
   showAlert('Enter the email code Clerk sent you.', 'info');
@@ -837,29 +878,22 @@ async function openAuthModal(mode = 'sign-in') {
     openAccountModal();
     return;
   }
-  if (mode === 'sign-in' || mode === 'sign-up') state.pendingSignIn = null;
+  if (mode === 'sign-in' || mode === 'sign-up') {
+    state.pendingSignIn = null;
+    state.pendingSignUp = null;
+  }
   setAuthMode(mode);
   unmountClerkAuth();
   if (elements.accountPanel) elements.accountPanel.classList.add('hidden');
   if (elements.authModeToggleBtn) elements.authModeToggleBtn.classList.remove('hidden');
   setModal(elements.authModal, true);
 
-  if (mode === 'sign-in') {
+  if (mode === 'sign-in' || mode === 'sign-up') {
     if (elements.authForm) elements.authForm.classList.remove('hidden');
     if (elements.authClerkMount) elements.authClerkMount.classList.add('hidden');
-    elements.authEmailInput?.focus();
+    if (mode === 'sign-up') elements.authNameInput?.focus();
+    else elements.authEmailInput?.focus();
     return;
-  }
-
-  const redirectOptions = getAuthRedirectOptions();
-  if (elements.authForm) elements.authForm.classList.add('hidden');
-  if (elements.authClerkMount) elements.authClerkMount.classList.remove('hidden');
-  try {
-    client.mountSignUp(elements.authClerkMount, redirectOptions);
-    mountedAuthMode = mode;
-  } catch (error) {
-    console.error('Clerk sign-up mount error:', error);
-    showAlert(clerkErrorMessage(error, 'Could not open sign up.'), 'error');
   }
 }
 
@@ -883,6 +917,7 @@ function closeAuthModal() {
   setModal(elements.authModal, false);
   unmountClerkAuth();
   state.pendingSignIn = null;
+  state.pendingSignUp = null;
   elements.authForm?.reset();
   if (elements.authForm) elements.authForm.classList.remove('hidden');
   if (elements.authClerkMount) elements.authClerkMount.classList.add('hidden');
@@ -919,6 +954,41 @@ async function submitAuth(event) {
   const client = await configureAuthClient();
   if (!client) return;
 
+  if (state.authMode === 'sign-up-verification') {
+    const code = elements.authCodeInput?.value.trim();
+    if (!code) {
+      showAlert('Enter the email verification code.', 'error');
+      return;
+    }
+    if (!state.pendingSignUp) {
+      showAlert('Start sign up again to request a new code.', 'error');
+      setAuthMode('sign-up');
+      return;
+    }
+
+    state.authLoading = true;
+    if (elements.authSubmitBtn) elements.authSubmitBtn.textContent = 'Verifying...';
+    renderAuth();
+
+    try {
+      const signUp = await state.pendingSignUp.attemptVerification({ strategy: 'email_code', code });
+      if (await completeClerkSignUp(client, signUp)) {
+        state.pendingSignUp = null;
+        return;
+      }
+      state.pendingSignUp = signUp;
+      showAlert(signUpStatusMessage(signUp), 'error');
+    } catch (error) {
+      console.error('Clerk sign-up email code verification error:', error);
+      showAlert(clerkErrorMessage(error, 'Could not verify the code.'), 'error');
+    } finally {
+      state.authLoading = false;
+      setAuthMode(state.authMode);
+      renderAuth();
+    }
+    return;
+  }
+
   if (state.authMode === 'second-factor') {
     const code = elements.authCodeInput?.value.trim();
     if (!code) {
@@ -948,14 +1018,48 @@ async function submitAuth(event) {
       showAlert(clerkErrorMessage(error, 'Could not verify the code.'), 'error');
     } finally {
       state.authLoading = false;
-      if (elements.authSubmitBtn) elements.authSubmitBtn.textContent = 'Verify code';
+      setAuthMode(state.authMode);
       renderAuth();
     }
     return;
   }
 
   if (state.authMode === 'sign-up') {
-    await openAuthModal('sign-up');
+    const name = elements.authNameInput?.value.trim();
+    const email = elements.authEmailInput?.value.trim();
+    const password = elements.authPasswordInput?.value;
+    if (!name || !email || !password) {
+      showAlert('Enter your name, email, and password.', 'error');
+      return;
+    }
+
+    state.authLoading = true;
+    if (elements.authSubmitBtn) elements.authSubmitBtn.textContent = 'Creating...';
+    renderAuth();
+
+    try {
+      const signUpResource = client.client?.signUp;
+      if (!signUpResource) throw new Error('Clerk sign-up is not ready yet. Please try again.');
+      const [firstName, ...lastNameParts] = name.split(/\s+/).filter(Boolean);
+      const signUp = await signUpResource.create({
+        emailAddress: email,
+        password,
+        firstName,
+        lastName: lastNameParts.join(' ') || undefined,
+      });
+      if (await completeClerkSignUp(client, signUp)) return;
+      if (await startEmailCodeSignUpVerification(signUp)) return;
+
+      console.warn('Clerk sign-up did not complete:', signUp);
+      showAlert(signUpStatusMessage(signUp), 'error');
+    } catch (error) {
+      console.error('Clerk sign-up error:', error);
+      showAlert(clerkErrorMessage(error, 'Could not create account.'), 'error');
+    } finally {
+      state.authLoading = false;
+      setAuthMode(state.authMode);
+      renderAuth();
+    }
     return;
   }
 
@@ -990,7 +1094,7 @@ async function submitAuth(event) {
     showAlert(clerkErrorMessage(error, 'Could not sign in.'), 'error');
   } finally {
     state.authLoading = false;
-    if (elements.authSubmitBtn) elements.authSubmitBtn.textContent = 'Sign in';
+    setAuthMode(state.authMode);
     renderAuth();
   }
 }
