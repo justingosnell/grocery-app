@@ -9,6 +9,7 @@ const {
   updateItem,
   updateList,
 } = require('./lists');
+const { resolveImage } = require('./images');
 const { requireAuth } = require('./auth');
 const { methodNotAllowed, notFound, parseJson, send } = require('./http');
 const { pool } = require('./db');
@@ -41,6 +42,10 @@ function pathParts(request) {
   return url.pathname.split('/').filter(Boolean);
 }
 
+function requestUrl(request) {
+  return new URL(request.url, `http://${request.headers.host || 'localhost'}`);
+}
+
 async function route(request, response) {
   const headers = corsHeaders(request);
 
@@ -63,6 +68,30 @@ async function route(request, response) {
 
   if (parts[0] !== 'api') {
     notFound(response);
+    return;
+  }
+
+  if (parts.length === 3 && parts[1] === 'images' && parts[2] === 'resolve') {
+    if (request.method === 'GET') {
+      const url = requestUrl(request);
+      send(response, 200, {
+        image: await resolveImage({
+          name: url.searchParams.get('name'),
+          category: url.searchParams.get('category'),
+        }),
+      }, headers);
+      return;
+    }
+
+    if (request.method === 'POST') {
+      const payload = await parseJson(request);
+      send(response, 200, {
+        image: await resolveImage(payload),
+      }, headers);
+      return;
+    }
+
+    methodNotAllowed(response);
     return;
   }
 
