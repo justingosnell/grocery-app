@@ -24,6 +24,7 @@ const COMMON_STORES = [
   'Publix', 'Safeway', 'Sam\'s Club', 'Sprouts', 'Target', 'Trader Joe\'s', 'Walmart',
   'Wegmans', 'Whole Foods',
 ];
+const GUEST_LIST_LIMIT_MESSAGE = 'You\'ve reached the guest limit. Create a free account to save unlimited grocery lists and access them from any device.';
 const PRODUCT_CATALOG = [
   { name: 'Milk', category: 'Dairy', emoji: '🥛', aliases: ['whole milk', '2 percent milk', 'oat milk'] },
   { name: 'Eggs', category: 'Dairy', emoji: '🥚', aliases: ['large eggs', 'dozen eggs'] },
@@ -101,6 +102,7 @@ const elements = {
   savedDrawerOverlay: document.getElementById('savedDrawerOverlay'),
   closeSavedDrawerBtn: document.getElementById('closeSavedDrawerBtn'),
   bottomSavedListsToggleBtn: document.getElementById('bottomSavedListsToggleBtn'),
+  savedListsBadge: document.getElementById('savedListsBadge'),
   bottomUserProfile: document.getElementById('bottomUserProfile'),
   bottomUserAvatar: document.getElementById('bottomUserAvatar'),
   bottomUserName: document.getElementById('bottomUserName'),
@@ -477,24 +479,92 @@ async function lookupProductImage(query = elements.itemInput?.value) {
 
   if (elements.productImageStatus) elements.productImageStatus.textContent = 'Finding product photo...';
   try {
-    const fields = 'product_name,brands,image_front_url,image_url';
-    const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(term)}&search_simple=1&action=process&json=1&page_size=8&fields=${fields}`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('Product lookup failed');
-    const data = await response.json();
-    const product = (data.products || []).find((candidate) => candidate.image_front_url || candidate.image_url);
-    const imageUrl = product?.image_front_url || product?.image_url || '';
+    let imageUrl = '';
+    let status = '';
+    if (apiBaseUrl) {
+      const category = elements.categoryInput?.value || inferCategory(query);
+      const response = await fetch(apiUrl('/api/images/resolve', { name: term, category }), {
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) throw new Error(`Product lookup failed (${response.status})`);
+      const data = await response.json();
+      imageUrl = data.image?.imageUrl || '';
+      status = data.image?.source === 'spoonacular'
+        ? 'Spoonacular photo found.'
+        : data.image?.source === 'openfoodfacts'
+          ? 'Open Food Facts photo found.'
+          : data.image?.source === 'fallback'
+            ? 'Category image applied.'
+            : 'Product photo found.';
+    } else {
+      const fields = 'product_name,brands,image_front_url,image_url';
+      const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(term)}&search_simple=1&action=process&json=1&page_size=8&fields=${fields}`;
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Product lookup failed');
+      const data = await response.json();
+      const product = (data.products || []).find((candidate) => candidate.image_front_url || candidate.image_url);
+      imageUrl = product?.image_front_url || product?.image_url || '';
+      status = product?.brands ? `${product.brands} photo found.` : 'Product photo found.';
+    }
     if (imageUrl) {
       state.productImageCache[term] = imageUrl;
       saveData(STORAGE_KEYS.productImageCache, state.productImageCache);
-      setProductImage(imageUrl, product.brands ? `${product.brands} photo found.` : 'Product photo found.');
+      setProductImage(imageUrl, status);
       return imageUrl;
     }
-    setProductImage('', 'No product photo found. Paste an image URL if you have one.');
+    setProductImage('', 'No product photo found.');
     return '';
   } catch (error) {
     console.error('Product image lookup failed:', error);
     if (elements.productImageStatus) elements.productImageStatus.textContent = 'Could not reach product image lookup.';
+    return '';
+  }
+}
+
+async function resolveImageForItem(item) {
+  if (!item?.name || item.imageUrl) return '';
+  const term = normalizeText(item.name);
+  if (!term) return '';
+  const cached = state.productImageCache[term];
+  if (cached) {
+    item.imageUrl = cached;
+    upsertPurchaseMemory(item);
+    persistCurrentList();
+    renderAll();
+    return cached;
+  }
+
+  try {
+    let imageUrl = '';
+    if (apiBaseUrl) {
+      const response = await fetch(apiUrl('/api/images/resolve', { name: item.name, category: item.category }), {
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) throw new Error(`Product lookup failed (${response.status})`);
+      const data = await response.json();
+      imageUrl = data.image?.imageUrl || '';
+    } else {
+      const fields = 'product_name,brands,image_front_url,image_url';
+      const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(term)}&search_simple=1&action=process&json=1&page_size=8&fields=${fields}`;
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Product lookup failed');
+      const data = await response.json();
+      const product = (data.products || []).find((candidate) => candidate.image_front_url || candidate.image_url);
+      imageUrl = product?.image_front_url || product?.image_url || '';
+    }
+
+    if (!imageUrl) return '';
+    const existing = state.currentList.find((candidate) => candidate.id === item.id);
+    if (!existing || existing.imageUrl) return imageUrl;
+    existing.imageUrl = imageUrl;
+    state.productImageCache[term] = imageUrl;
+    saveData(STORAGE_KEYS.productImageCache, state.productImageCache);
+    upsertPurchaseMemory(existing);
+    persistCurrentList();
+    renderAll();
+    return imageUrl;
+  } catch (error) {
+    console.error('Automatic product image lookup failed:', error);
     return '';
   }
 }
@@ -536,8 +606,19 @@ function savedListsStorageKey() {
   return state.user?.id ? `${STORAGE_KEYS.savedLists}:${state.user.id}` : STORAGE_KEYS.savedLists;
 }
 
+function savedListCount() {
+  return Object.keys(state.savedLists || {}).length;
+}
+
+function canSaveListWithName(name) {
+  if (isSignedIn()) return true;
+  if (name && state.savedLists?.[name]) return true;
+  return savedListCount() < 1;
+}
+
 function persistSavedLists() {
   saveData(savedListsStorageKey(), state.savedLists);
+  renderSavedListBadge();
 }
 
 function isSignedIn() {
@@ -866,7 +947,7 @@ function unmountClerkAuth() {
   mountedAuthMode = null;
 }
 
-async function openAuthModal(mode = 'sign-in') {
+async function openAuthModal(mode = 'sign-in', options = {}) {
   if (!clerkPublishableKey) {
     showAlert('Set VITE_CLERK_PUBLISHABLE_KEY to enable Clerk.', 'error');
     return;
@@ -883,6 +964,9 @@ async function openAuthModal(mode = 'sign-in') {
     state.pendingSignUp = null;
   }
   setAuthMode(mode);
+  if (options.message && elements.authModalSubtitle) {
+    elements.authModalSubtitle.textContent = options.message;
+  }
   unmountClerkAuth();
   if (elements.accountPanel) elements.accountPanel.classList.add('hidden');
   if (elements.authModeToggleBtn) elements.authModeToggleBtn.classList.remove('hidden');
@@ -895,6 +979,10 @@ async function openAuthModal(mode = 'sign-in') {
     else elements.authEmailInput?.focus();
     return;
   }
+}
+
+async function promptGuestListLimitSignUp() {
+  await openAuthModal('sign-up', { message: GUEST_LIST_LIMIT_MESSAGE });
 }
 
 function openAccountModal() {
@@ -1125,7 +1213,7 @@ function resetItemForm() {
   elements.addItemForm?.reset();
   if (elements.quantityInput) elements.quantityInput.value = '1';
   if (elements.categoryInput) elements.categoryInput.value = 'Produce';
-  setProductImage('', 'Looks up real product photos from Open Food Facts.');
+  setProductImage('', apiBaseUrl ? 'Automatically finds product photos when possible.' : 'Looks up real product photos from Open Food Facts.');
   elements.itemAutocomplete?.classList.add('hidden');
   state.editingId = null;
   if (elements.addItemBtn) elements.addItemBtn.textContent = 'Add Item';
@@ -1324,6 +1412,20 @@ function renderSavedLists() {
   }).join('');
 }
 
+function renderSavedListBadge() {
+  if (!elements.savedListsBadge) return;
+
+  const count = savedListCount();
+  elements.savedListsBadge.textContent = count > 99 ? '99+' : String(count);
+  elements.savedListsBadge.classList.remove('hidden');
+  elements.savedListsBadge.classList.add('flex');
+
+  if (elements.bottomSavedListsToggleBtn) {
+    const label = `Open saved lists, ${count} saved list${count === 1 ? '' : 's'}`;
+    elements.bottomSavedListsToggleBtn.setAttribute('aria-label', label);
+  }
+}
+
 function avatarInitials(user) {
   const source = String(user?.name || user?.email || 'U').trim();
   const nameParts = source.includes('@') ? [source[0]] : source.split(/\s+/);
@@ -1378,6 +1480,7 @@ function renderAuth() {
 
 function renderAll() {
   renderCurrentList();
+  renderSavedListBadge();
   if (state.savedListsRendered) renderSavedLists();
   renderAuth();
 }
@@ -1415,14 +1518,17 @@ function handleAddItem(event) {
     return;
   }
 
+  let savedItem = item;
   if (state.editingId) {
     state.currentList = state.currentList.map((existing) => (
       existing.id === state.editingId ? { ...existing, ...item, id: existing.id, completed: existing.completed } : existing
     ));
+    savedItem = state.currentList.find((existing) => existing.id === state.editingId) || item;
     upsertPurchaseMemory(item);
     showAlert('Item updated.');
   } else {
     state.currentList.push(item);
+    savedItem = item;
     upsertPurchaseMemory(item);
     showAlert('Item added.');
   }
@@ -1430,6 +1536,7 @@ function handleAddItem(event) {
   persistCurrentList();
   closeItemModal();
   renderAll();
+  void resolveImageForItem(savedItem);
 }
 
 function handleQuickAdd(event) {
@@ -1450,6 +1557,7 @@ function handleQuickAdd(event) {
   if (elements.quickAddInput) elements.quickAddInput.value = '';
   renderAll();
   showAlert(`Added ${item.name}.`);
+  void resolveImageForItem(item);
 }
 
 function moveItem(id, direction) {
@@ -1500,6 +1608,10 @@ async function handleSaveList() {
   }
   if (state.currentList.length === 0) {
     showAlert('Add at least one item before saving.', 'error');
+    return;
+  }
+  if (!canSaveListWithName(name)) {
+    await promptGuestListLimitSignUp();
     return;
   }
 
@@ -1553,6 +1665,10 @@ async function handleSavedListActions(event) {
 
   if (button.dataset.action === 'duplicate') {
     const copyName = `${name} copy`;
+    if (!canSaveListWithName(copyName)) {
+      await promptGuestListLimitSignUp();
+      return;
+    }
     state.savedLists[copyName] = {
       items: list.items.map((item) => ({ ...normalizeItem(item), id: uid() })),
       timestamp: new Date().toISOString(),
@@ -1731,7 +1847,7 @@ function bindEvents() {
     applyStoreSuggestion(suggestions[Number(button.dataset.suggestionIndex)]);
   });
   elements.lookupImageBtn?.addEventListener('click', () => lookupProductImage());
-  elements.imageUrlInput?.addEventListener('input', () => setProductImage(elements.imageUrlInput.value, elements.imageUrlInput.value ? 'Using pasted product photo.' : 'Looks up real product photos from Open Food Facts.'));
+  elements.imageUrlInput?.addEventListener('input', () => setProductImage(elements.imageUrlInput.value, elements.imageUrlInput.value ? 'Using pasted product photo.' : apiBaseUrl ? 'Automatically finds product photos when possible.' : 'Looks up real product photos from Open Food Facts.'));
   elements.currentList?.addEventListener('click', handleCurrentListActions);
   elements.saveListActionBtn?.addEventListener('click', handleSaveList);
   elements.savedListsContainer?.addEventListener('click', handleSavedListActions);
